@@ -1,0 +1,21 @@
+# --- General ---
+.DS_Store
+*.log
+
+# --- C++ Backend (CMake/Build files) ---
+backend/build/
+backend/*.o
+backend/*.so
+backend/*.a
+
+# --- Unity Frontend (Auto-generated files) ---
+frontend/Caldera/Library/
+frontend/Caldera/Temp/
+frontend/Caldera/Logs/
+frontend/Caldera/Build/
+frontend/Caldera/Builds/
+frontend/Caldera/*.sln
+frontend/Caldera/*.csproj
+
+# --- IDE specific ---
+.vscode/
