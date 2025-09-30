@@ -12,6 +12,8 @@ constexpr const char* APP_CONFIG    = "App.Config";
 constexpr const char* HAL_MANAGER    = "HAL.Manager";
 constexpr const char* HAL_UDP        = "HAL.UdpListener";
 constexpr const char* HAL_DEVICE     = "HAL.Device"; // generic placeholder
+constexpr const char* HAL_KINECT_V1  = "HAL.KinectV1";
+constexpr const char* HAL_KINECT_V2  = "HAL.KinectV2";
 
 // Processing pipeline
 constexpr const char* PROC_ORCH      = "Processing.Orchestrator";

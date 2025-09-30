@@ -1,4 +1,24 @@
 #!/bin/bash
+# Caldera Backend Test Script
+#
+# Run all tests:
+#   ./test.sh                    # Run light tests (excluding Stress)
+#   ./test.sh --heavy            # Run heavy tests
+#   ./test.sh --all              # Run all tests (light + heavy)
+#
+# Run specific tests:
+#   ./test.sh LoggerBasic        # Run specific test suite
+#   ./test.sh LoggerBasic.InitializeAndGet  # Run specific test
+#   ./test.sh Logger*            # Run tests matching pattern
+#
+# Advanced options:
+#   ./test.sh --ctest            # Use ctest instead of direct gtest
+#   ./test.sh --list             # List available tests
+#   ./test.sh --help             # Show help
+#
+# Available test suites: LoggerBasic, LoggerLevelsFixture, PipelineBasic, 
+#                       ProcessingConversion, LoggerConcurrency, FrameId, SharedMemory
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,11 +55,69 @@ if [ ! -f "$TEST_BIN" ]; then
   fi
 fi
 
-# If user wants ctest style discovery (e.g. pattern matching) they can pass --ctest [extra-args]
-if [ "${1:-}" = "--ctest" ]; then
-  shift
+# Parse arguments and handle special cases
+SHOW_HELP=0
+LIST_TESTS=0
+USE_CTEST=0
+RUN_ALL_TESTS=0
+SPECIFIC_TESTS=()
+EXTRA_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h)
+      SHOW_HELP=1; shift ;;
+    --list)
+      LIST_TESTS=1; shift ;;
+    --ctest)
+      USE_CTEST=1; shift ;;
+    --heavy)
+      EXTRA_ARGS+=("$1"); shift ;;
+    --all)
+      RUN_ALL_TESTS=1; shift ;;
+    --gtest_*)
+      EXTRA_ARGS+=("$1"); shift ;;
+    LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|*Stress*)
+      SPECIFIC_TESTS+=("$1"); shift ;;
+    *)
+      EXTRA_ARGS+=("$1"); shift ;;
+  esac
+done
+
+if [ $SHOW_HELP -eq 1 ]; then
+  echo "Caldera Backend Test Script"
+  echo ""
+  echo "Usage: $0 [OPTIONS] [TEST_PATTERNS...]"
+  echo ""
+  echo "Options:"
+  echo "  --help, -h      Show this help"
+  echo "  --list          List all available tests"
+  echo "  --ctest         Use ctest instead of direct gtest"
+  echo "  --heavy         Run heavy/stress tests"
+  echo "  --all           Run all tests (light + heavy)"
+  echo ""
+  echo "Test Patterns:"
+  echo "  LoggerBasic                    # Run entire test suite"
+  echo "  LoggerBasic.InitializeAndGet   # Run specific test"
+  echo "  Logger*                        # Run tests matching pattern"
+  echo ""
+  echo "Examples:"
+  echo "  $0                           # Run light tests"
+  echo "  $0 --heavy                   # Run heavy tests"
+  echo "  $0 LoggerBasic               # Run Logger tests only"
+  echo "  $0 --list                    # Show all available tests"
+  exit 0
+fi
+
+if [ $LIST_TESTS -eq 1 ]; then
+  echo -e "${GREEN}Available tests:${RESET}"
+  "$TEST_BIN" --gtest_list_tests 2>/dev/null
+  exit 0
+fi
+
+if [ $USE_CTEST -eq 1 ]; then
   echo -e "${GREEN}Running via ctest (individual test registration)${RESET}"
-  (cd "$BUILD_DIR" && ctest --output-on-failure "$@")
+  (cd "$BUILD_DIR" && ctest --output-on-failure "${EXTRA_ARGS[@]}")
   exit 0
 fi
 
@@ -48,17 +126,32 @@ if [ -t 1 ]; then
   export GTEST_COLOR=1
 fi
 
+# Check if heavy tests requested
 RUN_HEAVY=0
-EXTRA_ARGS=("$@")
-for arg in "$@"; do
+for arg in "${EXTRA_ARGS[@]}"; do
   if [ "$arg" = "--heavy" ]; then
     RUN_HEAVY=1
-    # Remove from args passed to gtest
-    EXTRA_ARGS=( )
-    for a2 in "$@"; do [ "$a2" != "--heavy" ] && EXTRA_ARGS+=("$a2"); done
     break
   fi
 done
+
+# Build test filter from specific tests
+if [ ${#SPECIFIC_TESTS[@]} -gt 0 ]; then
+  TEST_FILTER=""
+  for test in "${SPECIFIC_TESTS[@]}"; do
+    # Auto-add .* for suite names (no dot in name)
+    if [[ "$test" != *.* ]] && [[ "$test" != *\** ]]; then
+      test="$test.*"
+    fi
+    
+    if [ -z "$TEST_FILTER" ]; then
+      TEST_FILTER="$test"
+    else
+      TEST_FILTER="$TEST_FILTER:$test"
+    fi
+  done
+  EXTRA_ARGS+=(--gtest_filter="$TEST_FILTER")
+fi
 
 if [ $RUN_HEAVY -eq 1 ]; then
   # Switch to heavy binary
@@ -82,7 +175,8 @@ else
       --gtest_filter=*) FILTER_PROVIDED=1;;
     esac
   done
-  if [ $FILTER_PROVIDED -eq 0 ]; then
+  # If running all tests or user provided filter, don't add default exclusion
+  if [ $FILTER_PROVIDED -eq 0 ] && [ $RUN_ALL_TESTS -eq 0 ]; then
     EXTRA_ARGS+=(--gtest_filter=-*Stress)
   fi
   echo -e "${GREEN}Running GoogleTest binary:${RESET} $TEST_BIN" >&2

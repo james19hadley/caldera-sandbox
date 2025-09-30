@@ -25,9 +25,17 @@ struct WorldFrame {
 struct RawDepthFrame {
 	std::string sensorId;
 	uint64_t timestamp_ns = 0;
-	int width = 640;
-	int height = 480;
+	int width = 0;  // Determined by actual device
+	int height = 0; // Determined by actual device
 	std::vector<uint16_t> data; // size expected == width * height
+};
+
+struct RawColorFrame {
+	std::string sensorId;
+	uint64_t timestamp_ns = 0;
+	int width = 0;  // Determined by actual device  
+	int height = 0; // Determined by actual device
+	std::vector<uint8_t> data; // RGB or RGBA format, size = width * height * bytes_per_pixel
 };
 
 } // namespace caldera::backend::common
