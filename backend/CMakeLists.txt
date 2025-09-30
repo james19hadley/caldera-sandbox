@@ -10,6 +10,8 @@ add_library(caldera_backend_core STATIC
     src/hal/HAL_Manager.cpp
     src/processing/ProcessingManager.cpp
     src/transport/LocalTransportServer.cpp
+    src/transport/SharedMemoryTransportServer.cpp
+    src/transport/SharedMemoryReader.cpp
     src/AppManager.cpp
 )
 
@@ -35,5 +37,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(CALDERA_BUILD_TESTS "Build Caldera backend tests" ON)
 if (CALDERA_BUILD_TESTS)
+    include(CTest)
+    enable_testing()
     add_subdirectory(tests)
 endif()

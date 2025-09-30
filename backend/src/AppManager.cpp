@@ -15,9 +15,9 @@ AppManager::AppManager(std::shared_ptr<spdlog::logger> lifecycleLogger,
 	  processing_(std::move(processing)),
 	  transport_(std::move(transport))
 {
-	// Wire callbacks: HAL -> Processing -> Transport
-	hal_->setRawDataCallback([proc = processing_](const data::RawDataPacket& pkt){ proc->processRawData(pkt); });
-	processing_->setWorldFrameCallback([srv = transport_](const data::WorldFrame& frame){ srv->sendWorldFrame(frame); });
+	// Wire callbacks: HAL depth frames -> Processing -> Transport
+	hal_->setDepthFrameCallback([proc = processing_](const caldera::backend::common::RawDepthFrame& f){ proc->processRawDepthFrame(f); });
+	processing_->setWorldFrameCallback([srv = transport_](const caldera::backend::common::WorldFrame& frame){ srv->sendWorldFrame(frame); });
 	lifecycleLogger_->info("AppManager pipeline wired (HAL -> Processing -> Transport)");
 }
 

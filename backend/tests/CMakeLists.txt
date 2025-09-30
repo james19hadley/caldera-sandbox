@@ -4,11 +4,24 @@ add_executable(CalderaTests
     test_main.cpp
     test_logger_basic.cpp
     test_logger_levels.cpp
+    test_pipeline_basic.cpp
+    test_processing_conversion.cpp
+    test_logger_concurrency.cpp
+    test_frame_id_monotonic.cpp
+    test_shm_reader.cpp
+    test_shm_overflow.cpp
+    test_logger_ratelimit.cpp
 )
 
-# Enable CTest integration (optional)
-include(CTest)
-add_test(NAME CalderaTests COMMAND CalderaTests)
+# Heavy / longer running tests separated to allow fast default cycle
+add_executable(CalderaHeavyTests
+    test_main.cpp
+    test_processing_stress.cpp
+    test_pipeline_robust.cpp
+)
+
+# Let CTest discover individual GoogleTest test cases instead of a single umbrella test.
+include(GoogleTest)
 
 # Link with gtest and production sources (header-only parts picked via include paths)
 find_package(GTest CONFIG REQUIRED)
@@ -24,12 +37,13 @@ target_include_directories(CalderaTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../s
 # We link spdlog too because tests use logger implementation.
 find_package(spdlog CONFIG REQUIRED)
 
-target_link_libraries(CalderaTests PRIVATE
-    GTest::gtest
-    GTest::gtest_main
-    caldera_backend_core
-)
+target_link_libraries(CalderaTests PRIVATE GTest::gtest GTest::gtest_main caldera_backend_core)
+target_link_libraries(CalderaHeavyTests PRIVATE GTest::gtest GTest::gtest_main caldera_backend_core)
+
+gtest_discover_tests(CalderaTests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_TIMEOUT 30)
+gtest_discover_tests(CalderaHeavyTests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} DISCOVERY_TIMEOUT 60)
 
 target_compile_definitions(CalderaTests PRIVATE SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
 
 set_target_properties(CalderaTests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+set_target_properties(CalderaHeavyTests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)

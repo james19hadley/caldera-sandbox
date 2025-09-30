@@ -43,10 +43,20 @@ void Logger::initialize(const std::string& logFilePath,
 		}
 
 		// Initialize (once) the global async thread pool BEFORE creating async loggers
-		// Queue size 8192 (power of two helps), one background worker thread (can be tuned later)
-		// If already initialized (e.g., tests re-init), exception is ignored silently by spdlog
-		constexpr std::size_t kQueueSize = 8192;
-		constexpr std::size_t kWorkerThreads = 1;
+		// Queue size / thread count configurable via env:
+		//   CALDERA_LOG_QUEUE_SIZE (default 8192)
+		//   CALDERA_LOG_WORKERS (default 1)
+		auto readEnvSize = [](const char* name, std::size_t def)->std::size_t {
+			if (const char* v = std::getenv(name)) {
+				try {
+					long long parsed = std::stoll(v);
+					if (parsed > 0) return static_cast<std::size_t>(parsed);
+				} catch(...) {}
+			}
+			return def;
+		};
+		const std::size_t kQueueSize = readEnvSize("CALDERA_LOG_QUEUE_SIZE", 8192);
+		const std::size_t kWorkerThreads = readEnvSize("CALDERA_LOG_WORKERS", 1);
 		try {
 			spdlog::init_thread_pool(kQueueSize, kWorkerThreads);
 		} catch (...) {
@@ -163,6 +173,28 @@ std::optional<spdlog::level::level_enum> Logger::envLogLevel() const
 		return l;
 	} catch (...) {
 		return std::nullopt;
+	}
+}
+
+void Logger::warnRateLimited(const std::string& loggerName, const std::string& key, std::chrono::milliseconds period, const std::string& message)
+{
+	auto now = std::chrono::steady_clock::now();
+	bool shouldLog = false;
+	{
+		std::scoped_lock lock(mutex_);
+		auto &entry = rateLimitMap_[key];
+		if (now - entry.last >= period) {
+			entry.last = now;
+			shouldLog = true;
+		}
+	}
+	if (shouldLog) {
+		try {
+			auto lg = get(loggerName);
+			lg->warn(message);
+		} catch(...) {
+			// ignore
+		}
 	}
 }
 

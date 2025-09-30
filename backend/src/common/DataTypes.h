@@ -1,28 +1,34 @@
-// Placeholder domain data structures for pipeline wiring.
-// Will be expanded with real fields later.
+// Core data contracts for the vertical slice.
+// Step 1: Minimal world representation flowing through the backend.
 
-#ifndef CALDERA_BACKEND_COMMON_DATA_TYPES_H
-#define CALDERA_BACKEND_COMMON_DATA_TYPES_H
+#pragma once
 
 #include <cstdint>
 #include <vector>
 #include <string>
 
-namespace caldera::backend::data {
+namespace caldera::backend::common {
 
-struct RawDataPacket {
-	uint64_t timestamp_ns = 0; // monotonic time
-	int sourceId = 0;          // device/source identifier
-	std::vector<uint8_t> payload; // raw bytes (depth/color/whatever)
+struct StabilizedHeightMap {
+	int width = 0;
+	int height = 0;
+	std::vector<float> data; // size expected == width * height
 };
 
 struct WorldFrame {
-	uint64_t frameIndex = 0;
-	uint64_t timestamp_ns = 0; // time produced
-	// Placeholder: height map, objects, events etc.
-	std::string debugInfo; // temporary for logging demonstration
+	uint64_t timestamp_ns = 0; // monotonic production timestamp
+	uint64_t frame_id = 0; // monotonically increasing sequence id (assigned by processing stage)
+	StabilizedHeightMap heightMap; // only terrain for now
+	// (No objects, events, metadata yet – added in later steps)
 };
 
-} // namespace caldera::backend::data
+struct RawDepthFrame {
+	std::string sensorId;
+	uint64_t timestamp_ns = 0;
+	int width = 640;
+	int height = 480;
+	std::vector<uint16_t> data; // size expected == width * height
+};
 
-#endif // CALDERA_BACKEND_COMMON_DATA_TYPES_H
+} // namespace caldera::backend::common
+ 

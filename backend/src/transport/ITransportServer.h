@@ -14,7 +14,7 @@ public:
     virtual ~ITransportServer() = default;
     virtual void start() = 0;
     virtual void stop() = 0;
-    virtual void sendWorldFrame(const data::WorldFrame& frame) = 0;
+    virtual void sendWorldFrame(const caldera::backend::common::WorldFrame& frame) = 0;
 };
 
 } // namespace caldera::backend::transport

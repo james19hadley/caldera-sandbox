@@ -2,6 +2,10 @@
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
+# Resolve script directory to allow calling from repo root or backend/ directly
+SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+cd "$SCRIPT_DIR"
+
 # Set the build directory. All build artifacts will be placed here.
 BUILD_DIR="build"
 

@@ -26,10 +26,11 @@ void LocalTransportServer::stop() {
     logger_->info("LocalTransportServer stopped");
 }
 
-void LocalTransportServer::sendWorldFrame(const data::WorldFrame& frame) {
+void LocalTransportServer::sendWorldFrame(const caldera::backend::common::WorldFrame& frame) {
     if (!running_) return;
     if (logger_->should_log(spdlog::level::debug)) {
-        logger_->debug("Send frame {} ts={} info='{}'", frame.frameIndex, frame.timestamp_ns, frame.debugInfo);
+        const auto& hm = frame.heightMap;
+    logger_->debug("Send WorldFrame id={} ts={} map={}x{}", frame.frame_id, frame.timestamp_ns, hm.width, hm.height);
     }
 }
 

@@ -8,6 +8,7 @@
 #include <optional>
 #include <mutex>
 #include <chrono>
+#include <unordered_map>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/rotating_file_sink.h>
@@ -43,6 +44,10 @@ public:
 	// Clear explicit per-logger override (logger reverts to global level)
 	void clearLoggerLevel(const std::string& name);
 
+	// Rate-limited warning: emits at most once per period per key.
+	// key: logical grouping (e.g., "shm_drop"). period: minimum interval between emissions.
+	void warnRateLimited(const std::string& loggerName, const std::string& key, std::chrono::milliseconds period, const std::string& message);
+
 	// Shutdown all spdlog resources
 	void shutdown();
 
@@ -70,6 +75,9 @@ private:
 	// Stored sinks used to construct new loggers
 	std::shared_ptr<spdlog::sinks::stdout_color_sink_mt> console_sink_;
 	std::shared_ptr<spdlog::sinks::rotating_file_sink_mt> file_sink_;
+
+	struct RateLimitEntry { std::chrono::steady_clock::time_point last; };
+	std::unordered_map<std::string, RateLimitEntry> rateLimitMap_; // key -> entry
 };
 
 } // namespace caldera::backend::common

@@ -14,26 +14,27 @@ namespace caldera::backend::hal {
 
 class HAL_Manager {
 public:
-    using RawDataCallback = std::function<void(const data::RawDataPacket&)>;
+    using RawDepthFrame = caldera::backend::common::RawDepthFrame;
+    using RawDepthFrameCallback = std::function<void(const RawDepthFrame&)>;
 
     explicit HAL_Manager(std::shared_ptr<spdlog::logger> mainLogger,
-                         std::shared_ptr<spdlog::logger> udpLogger = nullptr);
+             std::shared_ptr<spdlog::logger> udpLogger = nullptr);
     ~HAL_Manager();
 
-    void setRawDataCallback(RawDataCallback cb);
+    void setDepthFrameCallback(RawDepthFrameCallback cb);
 
     void start();
     void stop();
 
 private:
-    void runMockLoop();
+    void workerLoop();
 
     std::shared_ptr<spdlog::logger> logger_;
     std::shared_ptr<spdlog::logger> udp_logger_;
-    RawDataCallback callback_;
+    RawDepthFrameCallback on_depth_frame_;
 
-    std::thread worker_;
-    std::atomic<bool> running_{false};
+    std::thread worker_thread_;
+    std::atomic<bool> is_running_{false};
 };
 
 } // namespace caldera::backend::hal

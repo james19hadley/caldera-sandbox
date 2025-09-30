@@ -17,7 +17,7 @@ public:
 
     void start() override;
     void stop() override;
-    void sendWorldFrame(const data::WorldFrame& frame) override;
+    void sendWorldFrame(const caldera::backend::common::WorldFrame& frame) override;
 
 private:
     std::shared_ptr<spdlog::logger> logger_;
