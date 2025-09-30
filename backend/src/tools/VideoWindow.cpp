@@ -41,14 +41,23 @@ VideoWindow::VideoWindow(const std::string& title, int width, int height)
                   std::to_string(width_) + "x" + std::to_string(height_) + ")");
 }
 
-VideoWindow::~VideoWindow() {
-    cleanup();
+VideoWindow::~VideoWindow() noexcept {
+    try {
+        cleanup();
+    } catch (...) {
+        // Ignore OpenGL cleanup errors during destruction
+    }
+    
     window_count_--;
     
     // Cleanup GLFW if this was the last window
-    if (window_count_ == 0 && glfw_initialized_) {
-        glfwTerminate();
-        glfw_initialized_ = false;
+    try {
+        if (window_count_ == 0 && glfw_initialized_) {
+            glfwTerminate();
+            glfw_initialized_ = false;
+        }
+    } catch (...) {
+        // Ignore GLFW cleanup errors during destruction
     }
 }
 
@@ -60,13 +69,26 @@ bool VideoWindow::initializeGL() {
 }
 
 void VideoWindow::cleanup() {
-    if (texture_id_) {
-        glDeleteTextures(1, &texture_id_);
+    // Clean up OpenGL resources if context is still valid
+    try {
+        if (window_ && texture_id_) {
+            glfwMakeContextCurrent(window_);
+            glDeleteTextures(1, &texture_id_);
+            texture_id_ = 0;
+        }
+    } catch (...) {
+        // Ignore OpenGL errors during cleanup
         texture_id_ = 0;
     }
     
-    if (window_) {
-        glfwDestroyWindow(window_);
+    // Clean up GLFW window
+    try {
+        if (window_) {
+            glfwDestroyWindow(window_);
+            window_ = nullptr;
+        }
+    } catch (...) {
+        // Ignore GLFW errors during cleanup
         window_ = nullptr;
     }
 }

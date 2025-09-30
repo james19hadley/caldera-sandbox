@@ -17,7 +17,8 @@
 #   ./test.sh --help             # Show help
 #
 # Available test suites: LoggerBasic, LoggerLevelsFixture, PipelineBasic, 
-#                       ProcessingConversion, LoggerConcurrency, FrameId, SharedMemory
+#                       ProcessingConversion, LoggerConcurrency, FrameId, SharedMemory,
+#                       SensorRecording, KinectV2_DeviceTest
 
 set -euo pipefail
 
@@ -77,7 +78,7 @@ while [[ $# -gt 0 ]]; do
       RUN_ALL_TESTS=1; shift ;;
     --gtest_*)
       EXTRA_ARGS+=("$1"); shift ;;
-    LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|*Stress*)
+    LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|SensorRecording*|KinectV2_DeviceTest*|*Stress*)
       SPECIFIC_TESTS+=("$1"); shift ;;
     *)
       EXTRA_ARGS+=("$1"); shift ;;

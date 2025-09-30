@@ -18,6 +18,8 @@ add_library(caldera_backend_core STATIC
     src/common/Logger.cpp
     src/hal/HAL_Manager.cpp
     src/hal/KinectV2_Device.cpp
+    src/hal/SensorRecorder.cpp
+    src/hal/MockSensorDevice.cpp
     src/processing/ProcessingManager.cpp
     src/transport/LocalTransportServer.cpp
     src/transport/SharedMemoryTransportServer.cpp

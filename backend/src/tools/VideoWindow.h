@@ -16,7 +16,7 @@ namespace caldera::backend::tools {
 class VideoWindow {
 public:
     VideoWindow(const std::string& title, int width, int height);
-    ~VideoWindow();
+    ~VideoWindow() noexcept;
 
     /**
      * @brief Display a depth frame as grayscale image

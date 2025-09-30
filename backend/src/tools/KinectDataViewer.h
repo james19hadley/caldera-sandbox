@@ -4,9 +4,13 @@
 #include <atomic>
 #include <thread>
 #include <functional>
+#include <string>
 
 namespace caldera::backend::hal {
     class KinectV2_Device;
+    class SensorRecorder;
+    class MockSensorDevice;
+    class ISensorDevice;
 }
 
 namespace caldera::backend::common {
@@ -19,7 +23,8 @@ namespace caldera::backend::tools {
 enum class SensorType {
     KINECT_V2,
     KINECT_V1,  // Future support
-    AUTO_DETECT
+    AUTO_DETECT,
+    PLAYBACK_FILE  // Playback recorded data
 };
 
 enum class ViewMode {
@@ -40,7 +45,15 @@ using ColorFrameCallback = std::function<void(const caldera::backend::common::Ra
 class KinectDataViewer {
 public:
     explicit KinectDataViewer(SensorType type = SensorType::AUTO_DETECT, ViewMode mode = ViewMode::TEXT_ONLY);
-    ~KinectDataViewer();
+    
+    /**
+     * @brief Constructor for playback mode
+     * @param dataFile Path to recorded data file 
+     * @param mode View mode
+     */
+    explicit KinectDataViewer(const std::string& dataFile, ViewMode mode = ViewMode::TEXT_ONLY);
+    
+    ~KinectDataViewer() noexcept;
 
     /**
      * @brief Start the viewer
@@ -74,6 +87,35 @@ public:
      */
     void setColorFrameCallback(ColorFrameCallback callback);
 
+    /**
+     * @brief Enable recording to file
+     * @param filename File to record to
+     * @return true if recording started successfully
+     */
+    bool startRecording(const std::string& filename);
+
+    /**
+     * @brief Stop recording
+     */
+    void stopRecording();
+
+    /**
+     * @brief Check if currently recording
+     */
+    bool isRecording() const;
+
+    /**
+     * @brief Set playback options (only for playback mode)
+     * @param loop Whether to loop playback
+     * @param fps Playback frame rate (0 = original timing)
+     */
+    void setPlaybackOptions(bool loop = false, double fps = 30.0);
+
+    /**
+     * @brief Get playback info (only for playback mode)
+     */
+    size_t getPlaybackFrameCount() const;
+
 private:
     void viewerLoop();
     void printFrame(const std::string& type, size_t width, size_t height, 
@@ -82,12 +124,25 @@ private:
     SensorType sensorType_;
     ViewMode viewMode_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> stop_called_{false};
     std::unique_ptr<std::thread> viewer_thread_;
-    caldera::backend::hal::KinectV2_Device* device_;  // TODO: Make polymorphic when V1 added
+    
+    // Device pointers (only one will be used)
+    caldera::backend::hal::KinectV2_Device* kinect_device_;  
+    std::unique_ptr<caldera::backend::hal::MockSensorDevice> mock_device_;
+    
+    // Playback file path (for playback mode)
+    std::string playback_file_;
     
     // Callbacks for frame data
     DepthFrameCallback depth_callback_;
     ColorFrameCallback color_callback_;
+    
+    // Recording support
+    std::unique_ptr<caldera::backend::hal::SensorRecorder> recorder_;
+    
+    // Helper to get current device interface
+    caldera::backend::hal::ISensorDevice* getCurrentDevice() const;
 };
 
 } // namespace caldera::backend::tools
