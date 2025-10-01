@@ -14,6 +14,9 @@ TEST(LoggerBasic, InitializeAndGet) {
 }
 
 TEST(LoggerBasic, PerLoggerOverride) {
+    if (!Logger::instance().isInitialized()) {
+        Logger::instance().initialize("logs/test/logger_basic.log");
+    }
     Logger::instance().setLoggerLevel("TEST_MODULE_OVERRIDE", spdlog::level::trace);
     auto log = Logger::instance().get("TEST_MODULE_OVERRIDE");
     EXPECT_TRUE(log->should_log(spdlog::level::trace));

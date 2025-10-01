@@ -1,38 +1,44 @@
 #include "AppManager.h"
 
-#include "hal/HAL_Manager.h"
+#include "hal/ISensorDevice.h"
 #include "processing/ProcessingManager.h"
 #include "transport/ITransportServer.h"
 
 namespace caldera::backend {
 
 AppManager::AppManager(std::shared_ptr<spdlog::logger> lifecycleLogger,
-		   std::shared_ptr<hal::HAL_Manager> hal,
-		   std::shared_ptr<processing::ProcessingManager> processing,
-		   std::shared_ptr<transport::ITransportServer> transport)
+	   std::unique_ptr<hal::ISensorDevice> device,
+	   std::shared_ptr<processing::ProcessingManager> processing,
+	   std::shared_ptr<transport::ITransportServer> transport)
 	: lifecycleLogger_(std::move(lifecycleLogger)),
-	  hal_(std::move(hal)),
+	  device_(std::move(device)),
 	  processing_(std::move(processing)),
 	  transport_(std::move(transport))
 {
-	// Wire callbacks: HAL depth frames -> Processing -> Transport
-	hal_->setDepthFrameCallback([proc = processing_](const caldera::backend::common::RawDepthFrame& f){ proc->processRawDepthFrame(f); });
+	// Wire callbacks: Device frames -> Processing -> Transport
+	// ISensorDevice delivers both depth & color; current pipeline only uses depth
+	device_->setFrameCallback([proc = processing_](const caldera::backend::common::RawDepthFrame& depth,
+						    const caldera::backend::common::RawColorFrame& /*color*/) {
+		proc->processRawDepthFrame(depth);
+	});
 	processing_->setWorldFrameCallback([srv = transport_](const caldera::backend::common::WorldFrame& frame){ srv->sendWorldFrame(frame); });
-	lifecycleLogger_->info("AppManager pipeline wired (HAL -> Processing -> Transport)");
+	lifecycleLogger_->info("AppManager pipeline wired (Device -> Processing -> Transport)");
 }
 
 void AppManager::start() {
 	if (running_) return;
 	lifecycleLogger_->info("Starting backend subsystems");
 	transport_->start();
-	hal_->start();
+	if (!device_->open()) {
+		lifecycleLogger_->error("Failed to open sensor device; pipeline will not produce frames");
+	}
 	running_ = true;
 }
 
 void AppManager::stop() {
 	if (!running_) return;
 	lifecycleLogger_->info("Stopping backend subsystems");
-	hal_->stop();
+	device_->close();
 	transport_->stop();
 	running_ = false;
 }

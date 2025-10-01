@@ -62,10 +62,9 @@ bool KinectV2_Device::open() {
         return false;
     }
 
-    // Set running flag and start capture thread
+    // Set running flag and start capture thread (join on close)
     is_running_ = true;
     capture_thread_ = std::thread(&KinectV2_Device::captureLoop, this);
-    capture_thread_.detach();
 
     logger_->info("KinectV2_Device successfully started with serial: {}", serial_);
     return true;
@@ -76,11 +75,11 @@ void KinectV2_Device::close() {
         return;
     }
 
-    // Signal the capture thread to stop
+    // Signal the capture thread to stop and join
     is_running_ = false;
-
-    // Give the capture loop time to see the flag change and exit
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    if (capture_thread_.joinable()) {
+        capture_thread_.join();
+    }
 
     // Stop and close the device
     if (device_) {

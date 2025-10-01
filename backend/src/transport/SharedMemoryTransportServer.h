@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 #include <cstdint>
+#include <sys/mman.h> // munmap
+#include <utility>    // std::swap
 
 namespace spdlog { class logger; }
 
@@ -52,7 +54,24 @@ private:
     Config cfg_;
     int fd_ = -1;
     size_t mapped_size_ = 0;
-    void* mapped_ = nullptr;
+    // RAII memory mapping wrapper (definition duplicated here for linkage simplicity)
+    class MemoryMapping {
+    public:
+        MemoryMapping() = default;
+        MemoryMapping(void* ptr, size_t size): ptr_(ptr), size_(size) {}
+        MemoryMapping(const MemoryMapping&) = delete;
+        MemoryMapping& operator=(const MemoryMapping&) = delete;
+        MemoryMapping(MemoryMapping&& other) noexcept { swap(other); }
+        MemoryMapping& operator=(MemoryMapping&& other) noexcept { if(this!=&other){ cleanup(); swap(other);} return *this; }
+        ~MemoryMapping(){ cleanup(); }
+        void reset(void* p=nullptr, size_t s=0){ cleanup(); ptr_=p; size_=s; }
+        void* get() const { return ptr_; }
+    private:
+        void cleanup(){ if(ptr_) { munmap(ptr_, size_); ptr_=nullptr; size_=0; } }
+        void swap(MemoryMapping& o) noexcept { std::swap(ptr_, o.ptr_); std::swap(size_, o.size_); }
+        void* ptr_ = nullptr; size_t size_ = 0;
+    };
+    MemoryMapping mapping_;
     size_t single_buffer_bytes_ = 0; // capacity in bytes for one float buffer
     bool running_ = false;
 };

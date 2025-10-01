@@ -8,6 +8,14 @@ backend/*.o
 backend/*.so
 backend/*.a
 
+# --- Vendored dependencies (keep submodule pointer, ignore build artifacts) ---
+vendor/libfreenect/build/
+vendor/libfreenect/*.a
+vendor/libfreenect/*.so*
+vendor/libfreenect/*.dylib
+vendor/libfreenect/*.dll
+vendor/libfreenect/*.lib
+
 # --- Unity Frontend (Auto-generated files) ---
 frontend/Caldera/Library/
 frontend/Caldera/Logs/

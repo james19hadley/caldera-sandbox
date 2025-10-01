@@ -3,16 +3,29 @@
 #include <chrono>
 #include <thread>
 #include "common/Logger.h"
-#include "hal/HAL_Manager.h"
+#include "hal/ISensorDevice.h"
+#include <random>
+#include <chrono>
 #include "processing/ProcessingManager.h"
 #include "transport/ITransportServer.h"
 
 using caldera::backend::common::Logger;
-using caldera::backend::hal::HAL_Manager;
+using caldera::backend::hal::ISensorDevice;
 using caldera::backend::processing::ProcessingManager;
 using caldera::backend::common::WorldFrame;
 
 namespace {
+class TestSyntheticDevice : public ISensorDevice {
+public:
+    bool open() override { if (running_) return true; running_=true; worker_=std::thread([this]{ run(); }); return true; }
+    void close() override { running_=false; if(worker_.joinable()) worker_.join(); }
+    bool isRunning() const override { return running_; }
+    std::string getDeviceID() const override { return "FrameIdSynth"; }
+    void setFrameCallback(caldera::backend::hal::RawFrameCallback callback) override { callback_=std::move(callback);} 
+private:
+    void run(){ std::mt19937 rng{std::random_device{}()}; std::uniform_int_distribution<uint16_t> dist(0,1500); while(running_){ if(callback_){ caldera::backend::common::RawDepthFrame d; d.sensorId="FrameIdSynth"; d.width=16; d.height=8; d.timestamp_ns= static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()); d.data.resize(d.width*d.height); for(auto &px:d.data) px=dist(rng); caldera::backend::common::RawColorFrame c; c.sensorId=d.sensorId; c.timestamp_ns=d.timestamp_ns; callback_(d,c);} std::this_thread::sleep_for(std::chrono::milliseconds(20)); }}
+    std::atomic<bool> running_{false}; std::thread worker_; caldera::backend::hal::RawFrameCallback callback_;
+};
 class CaptureTransport : public caldera::backend::transport::ITransportServer {
 public:
     explicit CaptureTransport(std::shared_ptr<spdlog::logger> l): log_(std::move(l)) {}
@@ -39,17 +52,17 @@ TEST(FrameId, MonotonicIncreasing) {
     auto logFusion = Logger::instance().get("Test.FrameId.Proc.Fusion");
     auto logTransport = Logger::instance().get("Test.FrameId.Transport");
 
-    auto hal = std::make_shared<HAL_Manager>(logHAL);
+    auto device = std::make_unique<TestSyntheticDevice>();
     auto proc = std::make_shared<ProcessingManager>(logProc, logFusion, -1.0f);
     auto transport = std::make_shared<CaptureTransport>(logTransport);
 
-    hal->setDepthFrameCallback([proc](const caldera::backend::common::RawDepthFrame& f){ proc->processRawDepthFrame(f); });
+    device->setFrameCallback([proc](const caldera::backend::common::RawDepthFrame& f, const caldera::backend::common::RawColorFrame&){ proc->processRawDepthFrame(f); });
     proc->setWorldFrameCallback([transport](const WorldFrame& wf){ transport->sendWorldFrame(wf); });
 
     transport->start();
-    hal->start();
+    device->open();
     std::this_thread::sleep_for(std::chrono::milliseconds(180));
-    hal->stop();
+    device->close();
     transport->stop();
 
     ASSERT_GE(transport->frames_.size(), 2u);

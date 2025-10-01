@@ -13,15 +13,12 @@ MockSensorDevice::MockSensorDevice(const std::string& dataFile)
 
 MockSensorDevice::~MockSensorDevice() noexcept {
     try {
-        // Just signal stop, don't wait for thread join in destructor
         is_running_.store(false);
-        
-        // Detach thread if it's joinable instead of joining
         if (playback_thread_.joinable()) {
-            playback_thread_.detach();
+            playback_thread_.join();
         }
     } catch (...) {
-        // Ignore all exceptions in destructor
+        // Swallow all exceptions in destructor
     }
 }
 
@@ -44,10 +41,6 @@ void MockSensorDevice::close() {
     try {
         if (is_running_.load()) {
             is_running_.store(false);
-            
-            // Give the thread a chance to finish naturally
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            
             if (playback_thread_.joinable()) {
                 playback_thread_.join();
             }

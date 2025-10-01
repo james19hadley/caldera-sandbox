@@ -9,7 +9,7 @@
 
 #include "common/DataTypes.h"
 
-namespace caldera::backend::hal { class HAL_Manager; }
+namespace caldera::backend::hal { class ISensorDevice; }
 namespace caldera::backend::processing { class ProcessingManager; }
 namespace caldera::backend::transport { class ITransportServer; }
 
@@ -18,7 +18,7 @@ namespace caldera::backend {
 class AppManager {
 public:
 	AppManager(std::shared_ptr<spdlog::logger> lifecycleLogger,
-		   std::shared_ptr<hal::HAL_Manager> hal,
+		   std::unique_ptr<hal::ISensorDevice> device,
 		   std::shared_ptr<processing::ProcessingManager> processing,
 		   std::shared_ptr<transport::ITransportServer> transport);
 
@@ -27,7 +27,7 @@ public:
 
 private:
 	std::shared_ptr<spdlog::logger> lifecycleLogger_;
-	std::shared_ptr<hal::HAL_Manager> hal_;
+	std::unique_ptr<hal::ISensorDevice> device_;
 	std::shared_ptr<processing::ProcessingManager> processing_;
 	std::shared_ptr<transport::ITransportServer> transport_;
 	bool running_ = false;

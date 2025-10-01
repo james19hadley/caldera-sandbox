@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cerrno>
 #include "common/Logger.h"
+#include <memory>
 
 namespace caldera::backend::transport {
 
@@ -28,10 +29,7 @@ void SharedMemoryTransportServer::start() {
 void SharedMemoryTransportServer::stop() {
     if (!running_) return;
     running_ = false;
-    if (mapped_) {
-        munmap(mapped_, mapped_size_);
-        mapped_ = nullptr;
-    }
+    mapping_.reset();
     if (fd_ >= 0) {
         close(fd_);
         fd_ = -1;
@@ -40,7 +38,7 @@ void SharedMemoryTransportServer::stop() {
 }
 
 bool SharedMemoryTransportServer::ensureMapped() {
-    if (mapped_) return true;
+    if (mapping_.get()) return true;
     single_buffer_bytes_ = static_cast<size_t>(cfg_.max_width) * cfg_.max_height * sizeof(float);
     mapped_size_ = sizeof(ShmHeader) + single_buffer_bytes_ * 2;
 
@@ -53,14 +51,14 @@ bool SharedMemoryTransportServer::ensureMapped() {
         logger_->error("ftruncate failed: {}", strerror(errno));
         return false;
     }
-    mapped_ = mmap(nullptr, mapped_size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
-    if (mapped_ == MAP_FAILED) {
+    void* raw = mmap(nullptr, mapped_size_, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
+    if (raw == MAP_FAILED) {
         logger_->error("mmap failed: {}", strerror(errno));
-        mapped_ = nullptr;
         return false;
     }
+    mapping_.reset(raw, mapped_size_);
     // Initialize header (idempotent if pre-existing but we reset ready flags)
-    auto* hdr = reinterpret_cast<ShmHeader*>(mapped_);
+    auto* hdr = reinterpret_cast<ShmHeader*>(mapping_.get());
     hdr->magic = 0x43414C44;
     hdr->version = 2;
     hdr->active_index = 0;
@@ -70,7 +68,7 @@ bool SharedMemoryTransportServer::ensureMapped() {
 
 void SharedMemoryTransportServer::sendWorldFrame(const caldera::backend::common::WorldFrame& frame) {
     if (!running_) return;
-    if (!mapped_ && !ensureMapped()) return;
+    if (!mapping_.get() && !ensureMapped()) return;
     const auto& hm = frame.heightMap;
     if (hm.width > static_cast<int>(cfg_.max_width) || hm.height > static_cast<int>(cfg_.max_height)) {
         // Rate limited via central Logger singleton (once per 2s)
@@ -78,7 +76,7 @@ void SharedMemoryTransportServer::sendWorldFrame(const caldera::backend::common:
             fmt::format("Frame dimensions exceed shm capacity {}x{} vs {}x{} -> dropping", hm.width, hm.height, cfg_.max_width, cfg_.max_height));
         return;
     }
-    auto* hdr = reinterpret_cast<ShmHeader*>(mapped_);
+    auto* hdr = reinterpret_cast<ShmHeader*>(mapping_.get());
     uint32_t write_index = 1 - hdr->active_index; // flip buffer
     BufferMeta &meta = hdr->buffers[write_index];
     meta.ready = 0; // mark invalid while writing
@@ -88,7 +86,7 @@ void SharedMemoryTransportServer::sendWorldFrame(const caldera::backend::common:
     meta.height = static_cast<uint32_t>(hm.height);
     meta.float_count = static_cast<uint32_t>(hm.data.size());
     // compute buffer base
-    char* base = reinterpret_cast<char*>(mapped_) + sizeof(ShmHeader) + write_index * single_buffer_bytes_;
+    char* base = reinterpret_cast<char*>(mapping_.get()) + sizeof(ShmHeader) + write_index * single_buffer_bytes_;
     std::memcpy(base, hm.data.data(), hm.data.size() * sizeof(float));
     __sync_synchronize();
     meta.ready = 1; // publish data

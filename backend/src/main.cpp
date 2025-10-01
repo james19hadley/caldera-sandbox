@@ -2,7 +2,10 @@
 #include "common/LoggingNames.h"
 
 #include "AppManager.h"
-#include "hal/HAL_Manager.h"
+#include "hal/ISensorDevice.h"
+#include "hal/MockSensorDevice.h"
+#include "hal/KinectV2_Device.h"
+#include "hal/KinectV1_Device.h"
 #include "processing/ProcessingManager.h"
 #include "transport/LocalTransportServer.h"
 
@@ -36,12 +39,36 @@ int main() {
 		auto transportLog = Logger::instance().get(TRANSPORT_SERVER);
 		auto handshakeLog = Logger::instance().get(TRANSPORT_HANDSHAKE);
 
-		// Construct subsystems with DI of loggers
-		auto hal = std::make_shared<hal::HAL_Manager>(halLog, udpLog);
+		// Construct sensor device via simple factory
+		std::unique_ptr<hal::ISensorDevice> device;
+		const char* sensorType = std::getenv("CALDERA_SENSOR_TYPE");
+		std::string sensor = sensorType ? sensorType : "mock"; // default mock
+		if (sensor == "kinect2") {
+			device = std::make_unique<hal::KinectV2_Device>();
+			halLog->info("Factory: using KinectV2_Device");
+		} else if (sensor == "kinect1") {
+	#if CALDERA_HAVE_KINECT_V1
+			device = std::make_unique<hal::KinectV1_Device>();
+			halLog->info("Factory: using KinectV1_Device");
+	#else
+			halLog->error("Kinect v1 requested but CALDERA_HAVE_KINECT_V1=0 (build without libfreenect)");
+			device = std::make_unique<hal::MockSensorDevice>("unused.dat");
+	#endif
+		} else if (sensor == "mock_recording") {
+			// Expect CALDERA_SENSOR_RECORDING_PATH to point to a .dat file created by SensorRecorder
+			const char* path = std::getenv("CALDERA_SENSOR_RECORDING_PATH");
+			std::string file = path ? path : "test_sensor_data.dat";
+			device = std::make_unique<hal::MockSensorDevice>(file);
+			halLog->info("Factory: using MockSensorDevice playback file={} (ONCE)", file);
+		} else { // fallback
+			device = std::make_unique<hal::MockSensorDevice>("unused.dat");
+			halLog->info("Factory: using MockSensorDevice (synthetic; file load may fail if missing)");
+		}
+
 		auto processing = std::make_shared<processing::ProcessingManager>(procOrchLog, fusionLog);
 		auto transport = std::make_shared<transport::LocalTransportServer>(transportLog, handshakeLog);
 
-		AppManager app(appLog, hal, processing, transport);
+		AppManager app(appLog, std::move(device), processing, transport);
 		app.start();
 
 		// Mock run loop

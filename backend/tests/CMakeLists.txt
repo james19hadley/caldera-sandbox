@@ -13,6 +13,8 @@ add_executable(CalderaTests
     test_logger_ratelimit.cpp
     test_kinectv2_device.cpp
     test_sensor_recording.cpp
+    test_pipeline_failures.cpp
+    test_shm_and_processing_negatives.cpp
     # test_kinect_data_viewer.cpp       # Disabled due to compilation issues
     # test_kinect_data_validation.cpp   # Disabled due to compilation issues
 )

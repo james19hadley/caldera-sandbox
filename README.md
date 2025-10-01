@@ -5,8 +5,13 @@
 The backend (`backend/`) uses CMake + vcpkg and provides convenience scripts.
 
 ### Prerequisites
-1. Environment variable `VCPKG_ROOT` must point to your vcpkg installation.
-2. Dependencies are declared in `backend/vcpkg.json` (currently `spdlog`, `gtest`).
+1. Environment variable `VCPKG_ROOT` must point to your vcpkg installation (auto-detected at `~/vcpkg` if unset).
+2. Initialize git submodules (needed for Kinect v1 vendored dependency):
+```
+git submodule update --init --recursive
+```
+3. Dependencies managed by vcpkg are declared in `backend/vcpkg.json` (currently `spdlog`, `gtest`, plus others as added).
+4. (Optional) If you do NOT need Kinect v1 support you can temporarily remove / skip the `vendor/libfreenect` submodule, but note: current `CMakeLists.txt` treats libfreenect as mandatory and will FATAL_ERROR if the vendor directory is absent. (A toggle `CALDERA_WITH_KINECT_V1` may be added later.)
 
 ### Build (fresh)
 From `backend/` directory:
@@ -70,9 +75,14 @@ Common backend code (logger, HAL mock, processing, transport, orchestrator) is c
 - Add integration pipeline test with mock transport.
 - Expand data structures (`RawDataPacket`, `WorldFrame`).
 - Introduce async logging (optional) and structured logging (JSON) if needed.
+- Optional CMake flag to make Kinect v1 truly optional (relax current mandatory vendor requirement).
 
 ---
 For architectural overview see `01_Architectural_Overview.md`.
+
+## Kinect Sensors Note
+
+Kinect v1 support (experimental) and general sensor setup details are consolidated in `backend/KINECT_SETUP.md`. The v1 path relies on a vendored `libfreenect` submodule auto-built by `build.sh` (because upstream vcpkg lacks a port). A future build option will allow disabling it for minimal environments.
 
 ## Shared Memory Transport Specification
 

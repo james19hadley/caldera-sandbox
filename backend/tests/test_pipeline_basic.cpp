@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 #include "common/Logger.h"
-#include "hal/HAL_Manager.h"
+#include "hal/ISensorDevice.h"
+#include <atomic>
+#include <thread>
+#include <random>
+#include <chrono>
 #include "processing/ProcessingManager.h"
 #include "transport/ITransportServer.h"
 
@@ -10,11 +14,44 @@
 #include <chrono>
 
 using caldera::backend::common::Logger;
-using caldera::backend::hal::HAL_Manager;
+using caldera::backend::hal::ISensorDevice;
 using caldera::backend::processing::ProcessingManager;
 using caldera::backend::common::WorldFrame;
 
 namespace {
+class TestSyntheticDevice : public ISensorDevice {
+public:
+    TestSyntheticDevice() = default;
+    bool open() override {
+        running_.store(true);
+        worker_ = std::thread([this]{
+            std::mt19937 rng{std::random_device{}()};
+            std::uniform_int_distribution<uint16_t> dist(0,1500);
+            while (running_) {
+                if (callback_) {
+                    caldera::backend::common::RawDepthFrame d; d.sensorId="TestSynth"; d.width=640; d.height=480; d.timestamp_ns = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+                    d.data.resize(640*480);
+                    for (auto &px: d.data) px = dist(rng);
+                    caldera::backend::common::RawColorFrame c; c.sensorId=d.sensorId; c.timestamp_ns=d.timestamp_ns;
+                    callback_(d,c);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(33));
+            }
+        });
+        return true;
+    }
+    void close() override {
+        running_.store(false);
+        if (worker_.joinable()) worker_.join();
+    }
+    bool isRunning() const override { return running_.load(); }
+    std::string getDeviceID() const override { return "TestSyntheticDevice"; }
+    void setFrameCallback(caldera::backend::hal::RawFrameCallback callback) override { callback_ = std::move(callback); }
+private:
+    std::atomic<bool> running_{false};
+    std::thread worker_;
+    caldera::backend::hal::RawFrameCallback callback_;
+};
 class MockTransport : public caldera::backend::transport::ITransportServer {
 public:
     explicit MockTransport(std::shared_ptr<spdlog::logger> log) : log_(std::move(log)) {}
@@ -45,20 +82,20 @@ TEST(PipelineBasic, EndToEndGeneratesWorldFrames) {
     auto logFusion = Logger::instance().get("Test.Processing.Fusion");
     auto logTransport = Logger::instance().get("Test.Transport");
 
-    auto hal = std::make_shared<HAL_Manager>(logHAL);
+    auto device = std::make_unique<TestSyntheticDevice>();
     auto proc = std::make_shared<ProcessingManager>(logProc, logFusion, -1.0f);
     auto transport = std::make_shared<MockTransport>(logTransport);
 
-    // Wire manually
-    hal->setDepthFrameCallback([proc](const caldera::backend::common::RawDepthFrame& f){ proc->processRawDepthFrame(f); });
+    // Wire manually via device callback
+    device->setFrameCallback([proc](const caldera::backend::common::RawDepthFrame& f, const caldera::backend::common::RawColorFrame&){ proc->processRawDepthFrame(f); });
     proc->setWorldFrameCallback([transport](const WorldFrame& wf){ transport->sendWorldFrame(wf); });
 
     transport->start();
-    hal->start();
+    ASSERT_TRUE(device->open());
 
     std::this_thread::sleep_for(std::chrono::milliseconds(250)); // ~7-8 frames @30 FPS
 
-    hal->stop();
+    device->close();
     transport->stop();
 
     EXPECT_GE(transport->framesReceived_, 3u) << "Too few frames produced";

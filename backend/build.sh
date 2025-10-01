@@ -36,6 +36,20 @@ export VCPKG_MAX_CONCURRENCY=$NPROC
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 cd "$SCRIPT_DIR"
 
+# VCPKG_ROOT requirement (explicit by default).
+# Opt-in auto-detect only if CALDERA_AUTODETECT_VCPKG=1 is exported.
+if [ -z "${VCPKG_ROOT:-}" ]; then
+	if [ "${CALDERA_AUTODETECT_VCPKG:-0}" = "1" ] && [ -x "$HOME/vcpkg/vcpkg" ]; then
+		export VCPKG_ROOT="$HOME/vcpkg"
+		echo "[build.sh] CALDERA_AUTODETECT_VCPKG=1 -> using detected VCPKG_ROOT=$VCPKG_ROOT"
+	else
+		echo "[build.sh] Error: VCPKG_ROOT is not set."
+		echo "           Export it, e.g.: export VCPKG_ROOT=~/vcpkg"
+		echo "           (Set CALDERA_AUTODETECT_VCPKG=1 to allow fallback to ~/vcpkg if it exists.)"
+		exit 1
+	fi
+fi
+
 # Set the build directory. All build artifacts will be placed here.
 BUILD_DIR="build"
 
@@ -83,6 +97,29 @@ else
 	echo "--- Incremental build: using existing $BUILD_DIR (no clean) ---"
 fi
 mkdir -p "$BUILD_DIR"
+
+# --- Auto-build vendored libfreenect (Kinect v1) if present and not built ---
+VENDOR_FREENECT_ROOT="${SCRIPT_DIR}/../vendor/libfreenect"
+if [ -d "$VENDOR_FREENECT_ROOT" ]; then
+	FREENECT_LIB_DIR="${VENDOR_FREENECT_ROOT}/build/lib"
+	FREENECT_LIB_FILE="${FREENECT_LIB_DIR}/libfreenect.a"
+	if [ ! -f "$FREENECT_LIB_FILE" ] && [ ! -f "${FREENECT_LIB_DIR}/libfreenect.so" ]; then
+		echo "--- Building vendored libfreenect (v1) ---"
+		( cd "$VENDOR_FREENECT_ROOT" && \
+			mkdir -p build && cd build && \
+			cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=OFF -DBUILD_FAKENECT=OFF -DBUILD_OPENNI2_DRIVER=OFF .. && \
+			make -j "$NPROC" )
+		if [ ! -f "$FREENECT_LIB_FILE" ] && [ ! -f "${FREENECT_LIB_DIR}/libfreenect.so" ]; then
+			echo "Error: Failed to build vendored libfreenect" >&2
+			exit 1
+		fi
+		echo "--- Vendored libfreenect build complete ---"
+	else
+		echo "--- Vendored libfreenect already built ---"
+	fi
+else
+	echo "[build.sh] Note: vendored libfreenect not present at $VENDOR_FREENECT_ROOT (skipping)"
+fi
 
 # 2. Configure the project using CMake.
 echo "--- Configuring project ---"
