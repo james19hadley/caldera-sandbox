@@ -28,6 +28,10 @@
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
+# Use all available CPU cores for VCPKG package builds to speed up the process
+NPROC=$(nproc)
+export VCPKG_MAX_CONCURRENCY=$NPROC
+
 # Resolve script directory to allow calling from repo root or backend/ directly
 SCRIPT_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 cd "$SCRIPT_DIR"
@@ -86,7 +90,6 @@ echo "--- Configuring project ---"
 cmake -B $BUILD_DIR -S . -DCALDERA_BUILD_TESTS=ON -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 
 # 3. Build the project (using all CPU cores)
-NPROC=$(nproc)
 if [ ${#TARGETS[@]} -eq 0 ]; then
 	echo "--- Building all targets (using $NPROC cores) ---"
 	cmake --build $BUILD_DIR -j $NPROC
