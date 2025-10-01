@@ -28,6 +28,7 @@ int main() {
 	Logger::instance().setLoggerLevel(HAL_UDP, spdlog::level::debug);
 	Logger::instance().setLoggerLevel(APP_LIFECYCLE, spdlog::level::info);
 	Logger::instance().setLoggerLevel(TRANSPORT_SERVER, spdlog::level::debug);
+	Logger::instance().setLoggerLevel(TRANSPORT_HANDSHAKE, spdlog::level::info);
 
 	try {
 		// Acquire loggers first (so we see creation ordering)

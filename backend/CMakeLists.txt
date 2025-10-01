@@ -61,6 +61,7 @@ add_library(caldera_backend_core STATIC
     src/transport/LocalTransportServer.cpp
     src/transport/SharedMemoryTransportServer.cpp
     src/transport/SharedMemoryReader.cpp
+    src/transport/FifoManager.cpp
     src/AppManager.cpp
 )
 

@@ -6,6 +6,7 @@
 #include <thread>
 
 #include "ITransportServer.h"
+#include "FifoManager.h"
 
 namespace caldera::backend::transport {
 
@@ -24,6 +25,10 @@ private:
     std::shared_ptr<spdlog::logger> handshake_logger_;
     std::atomic<bool> running_{false};
     std::thread worker_;
+    FifoManager fifo_{handshake_logger_};
+    std::string shm_name_a_;
+    std::string shm_name_b_;
+    size_t shm_size_ = 0;
 };
 
 } // namespace caldera::backend::transport
