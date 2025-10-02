@@ -72,6 +72,11 @@ public:
 
     uint64_t framesPublished() const { return frames_published_.load(std::memory_order_relaxed); }
     const HarnessConfig& cfg() const { return harness_cfg_; }
+    // Test-only direct sensor access (returns nullptr if index out of range)
+    caldera::backend::hal::SyntheticSensorDevice* syntheticSensor(size_t idx=0) {
+        if (idx >= sensors_.size()) return nullptr;
+        return sensors_[idx].get();
+    }
 
 private:
     std::shared_ptr<spdlog::logger> logger(const std::string& name) {

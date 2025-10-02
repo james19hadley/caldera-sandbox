@@ -145,9 +145,18 @@ Status: IMPLEMENTED
 
 ---
 ## Phase 6: Fault Injection (Sensor Drop / Stutter)
-### Planned
-- Extend SyntheticSensorDevice with `stopAfter(n)` + `pause()/resume()`.
-- Test ensures pipeline continues running (no deadlocks) and stats reflect reduced frames.
+Status: IMPLEMENTED (pause/resume + jitter + frame drop)
+### Implementation
+- SyntheticSensorDevice controls: pause(), resume(), setStopAfter(n), isPaused(), framesGenerated().
+- Fault injection config: dropEveryN (skip emission upstream), jitterMaxMs (uniform random 0..N ms sleep), seed (deterministic RNG).
+- Stats counters exposed: produced (pre-drop), emitted (delivered to processing), dropped.
+- Auto-pause one-shot when reaching stopAfter threshold.
+- Tests:
+   - `integration/test_fault_injection_sensor_pause.cpp`: manual pause/resume semantics.
+   - `integration/test_fault_injection_jitter_drop.cpp`: validates contiguous downstream frame_id sequence despite configured upstream drops (dropEveryN=4) and jitter; asserts stats consistency (emitted + dropped == produced). 
+### Next Enhancements (Future)
+- Add burst drop & latency spike scripting (patterned disturbances).
+- Aggregate jitter distribution & pause durations into harness-level metrics.
 
 ---
 ## Phase 7: Performance / Stress (Lightweight)

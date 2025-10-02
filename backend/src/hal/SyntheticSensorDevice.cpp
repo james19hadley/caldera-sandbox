@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstring>
 #include <thread>
+#include <random>
 
 using namespace std::chrono_literals;
 namespace caldera::backend::hal {
@@ -34,7 +35,13 @@ void SyntheticSensorDevice::runLoop() {
     auto period = std::chrono::duration<double>(1.0 / cfg_.fps);
     auto next_tp = clock::now();
     std::vector<uint16_t> depth(static_cast<size_t>(cfg_.width) * cfg_.height);
+    std::mt19937 rng;
     while (running_.load()) {
+        // Pause gate (simple sleep loop to avoid busy spin). Keeps steady_clock origin fresh when resuming.
+        while (running_.load() && paused_.load()) {
+            std::this_thread::sleep_for(1ms);
+        }
+        if (!running_.load()) break;
         fillPattern(depth); // static spatial pattern
         RawDepthFrame raw;
         raw.sensorId = cfg_.sensorId;
@@ -42,8 +49,46 @@ void SyntheticSensorDevice::runLoop() {
         raw.height = cfg_.height;
         raw.timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now().time_since_epoch()).count();
         raw.data = depth; // copy (fine for tests)
-        if (callback_) callback_(raw, RawColorFrame{}); // color empty
+        produced_frames_.fetch_add(1, std::memory_order_relaxed);
+        bool drop = false;
+        uint32_t dropN = fi_dropEveryN_.load(std::memory_order_relaxed);
+        if (dropN > 0) {
+            if ((frame_counter_ + 1) % dropN == 0) drop = true; // drop  Nth,2N-th,...
+        }
+        uint32_t jitterMax = fi_jitterMaxMs_.load(std::memory_order_relaxed);
+        if (!drop && jitterMax > 0) {
+            if (!fi_rng_init_.load(std::memory_order_acquire)) {
+                rng.seed(fi_seed_.load());
+                fi_rng_init_.store(true, std::memory_order_release);
+            }
+            std::uniform_int_distribution<uint32_t> dist(0, jitterMax);
+            uint32_t extra = dist(rng);
+            if (extra) std::this_thread::sleep_for(std::chrono::milliseconds(extra));
+        }
+        if (!drop) {
+            if (callback_) {
+                callback_(raw, RawColorFrame{});
+                emitted_frames_.fetch_add(1, std::memory_order_relaxed);
+            }
+        } else {
+            dropped_frames_.fetch_add(1, std::memory_order_relaxed);
+            if (log_ && log_->should_log(spdlog::level::debug)) {
+                log_->debug("(fault) dropped frame future_id={} dropEveryN={}", frame_counter_ + 1, dropN);
+            }
+        }
         ++frame_counter_;
+        // Auto-pause after N frames if configured
+        uint64_t limit = stop_after_.load();
+        if (limit > 0 && frame_counter_ >= limit) {
+            // Ensure we only auto-pause once by clearing stop_after_ once triggered
+            uint64_t expected = limit;
+            if (stop_after_.compare_exchange_strong(expected, 0ULL)) {
+                if (!paused_.load()) {
+                    paused_.store(true);
+                    if (log_) log_->info("SyntheticSensorDevice auto-paused after {} frames (stop_after)", frame_counter_);
+                }
+            }
+        }
         next_tp += std::chrono::duration_cast<std::chrono::steady_clock::duration>(period);
         std::this_thread::sleep_until(next_tp);
     }
@@ -108,6 +153,31 @@ void SyntheticSensorDevice::fillPattern(std::vector<uint16_t>& buf) const {
 
 uint32_t SyntheticSensorDevice::computeCRC(const std::vector<uint16_t>& buf) const {
     return caldera::backend::common::crc32_bytes(reinterpret_cast<const uint8_t*>(buf.data()), buf.size() * sizeof(uint16_t));
+}
+
+void SyntheticSensorDevice::pause() {
+    if (running_.load()) paused_.store(true);
+}
+
+void SyntheticSensorDevice::resume() {
+    if (running_.load()) {
+        paused_.store(false);
+        if (log_) log_->info("SyntheticSensorDevice resumed id={}", cfg_.sensorId);
+    }
+}
+
+void SyntheticSensorDevice::setStopAfter(uint64_t frames) {
+    stop_after_.store(frames);
+}
+
+void SyntheticSensorDevice::configureFaultInjection(const FaultInjectionConfig& fic) {
+    fi_dropEveryN_.store(fic.dropEveryN, std::memory_order_relaxed);
+    fi_jitterMaxMs_.store(fic.jitterMaxMs, std::memory_order_relaxed);
+    fi_seed_.store(fic.seed, std::memory_order_relaxed);
+    fi_rng_init_.store(false, std::memory_order_relaxed);
+    if (log_) {
+        log_->info("Configured fault injection dropEveryN={} jitterMaxMs={} seed=0x{:X}", fic.dropEveryN, fic.jitterMaxMs, fic.seed);
+    }
 }
 
 } // namespace caldera::backend::hal
