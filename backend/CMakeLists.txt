@@ -43,6 +43,18 @@ if (CALDERA_WITH_KINECT_V1)
         NO_DEFAULT_PATH
     )
 
+    # Fallback to system libfreenect via pkg-config if vendored not found
+    if (NOT FREENECT_INCLUDE_DIR OR NOT FREENECT_LIBRARY)
+        pkg_check_modules(FREENECT_PKG freenect)
+        if (FREENECT_PKG_FOUND)
+            message(STATUS "Using system libfreenect via pkg-config")
+            set(FREENECT_INCLUDE_DIR ${FREENECT_PKG_INCLUDE_DIRS})
+            if (NOT FREENECT_LIBRARY)
+                find_library(FREENECT_LIBRARY NAMES freenect PATHS ${FREENECT_PKG_LIBRARY_DIRS})
+            endif()
+        endif()
+    endif()
+
     if (FREENECT_INCLUDE_DIR AND FREENECT_LIBRARY)
         message(STATUS "libfreenect(v1) include: ${FREENECT_INCLUDE_DIR}")
         message(STATUS "libfreenect(v1) library: ${FREENECT_LIBRARY}")
@@ -152,6 +164,13 @@ target_link_libraries(KinectViewer PRIVATE
     OpenGL::GL 
     glfw
 )
+
+# Kinect v1 control CLI (LED/Tilt) using vendored libfreenect
+add_executable(KinectV1Ctl
+    src/tools/kinectv1_ctl.cpp
+)
+target_include_directories(KinectV1Ctl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(KinectV1Ctl PRIVATE caldera_backend_core)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

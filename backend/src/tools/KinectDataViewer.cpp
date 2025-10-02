@@ -1,5 +1,6 @@
 #include "tools/KinectDataViewer.h"
 #include "hal/KinectV2_Device.h"
+#include "hal/KinectV1_Device.h"
 #include "hal/SensorRecorder.h"
 #include "hal/MockSensorDevice.h"
 #include "hal/ISensorDevice.h"
@@ -32,9 +33,15 @@ KinectDataViewer::KinectDataViewer(SensorType type, ViewMode mode)
             std::cout << "Initializing Kinect V2 sensor..." << std::endl;
             break;
         case SensorType::KINECT_V1:
-            // TODO: Implement when KinectV1_Device is ready
-            std::cerr << "Kinect V1 support not yet implemented" << std::endl;
+        {
+#if CALDERA_HAVE_KINECT_V1
+            kinect_device_ = new caldera::backend::hal::KinectV1_Device();
+            std::cout << "Initializing Kinect V1 sensor..." << std::endl;
+#else
+            std::cerr << "Built without Kinect V1 support (CALDERA_HAVE_KINECT_V1=0)" << std::endl;
             kinect_device_ = nullptr;
+#endif
+        }
             break;
         case SensorType::PLAYBACK_FILE:
             // Should not reach here - use playback constructor

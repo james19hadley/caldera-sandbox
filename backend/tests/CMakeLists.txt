@@ -32,6 +32,7 @@ add_executable(CalderaTests
     # sensor
     sensor/test_sensor_kinectv2_device.cpp
     sensor/test_sensor_recording.cpp
+    sensor/test_sensor_kinectv1_device.cpp
     sensor/test_sensor_mock_negative.cpp
     # integration
     integration/test_synthetic_sensor_pass_through.cpp
