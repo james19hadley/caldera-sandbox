@@ -36,6 +36,7 @@ add_executable(CalderaTests
     # integration
     integration/test_synthetic_sensor_pass_through.cpp
     integration/test_processing_scale_semantics.cpp
+    integration/test_transport_latency.cpp
     # helpers (non-test utilities referenced by tests)
     helpers/TestLocalTransportClient.cpp
     # Disabled (require hardware / pending fixes)

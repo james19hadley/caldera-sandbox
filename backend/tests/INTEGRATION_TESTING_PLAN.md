@@ -129,12 +129,19 @@ Current behavior: identity pass-through (no smoothing). Future `IHeightMapFilter
 
 ---
 ## Phase 5: Transport Round-Trip Latency & Integrity
-After Phase 0 harness exists.
+Status: IMPLEMENTED
 
-### Planned
-- Add timestamp capture at sensor emission and client receive; compute latencies for N frames.
-- Assert P95 latency < 10ms (small frames) with relaxed margin (if CI jitter problematic, log only + WARN; strict later).
-- Integrity: repeat Phase 0 CRC logic.
+### Implementation
+- New test `integration/test_transport_latency.cpp` (suite `TransportLatency.SingleSensorLatencyP95WithinBudget`).
+- Uses 16x16 RAMP synthetic sensor @30 FPS with scale=0.001.
+- Polls `SharedMemoryReader.latest()` to collect 25 frames; computes latency = now - frame.timestamp_ns (steady_clock) and validates integrity via regenerated RAMP pattern CRC over float buffer.
+- P95 assertion: <15 ms (soft target remains <10 ms per plan; cushion added to avoid CI flakiness). Max latency must be <25 ms.
+
+### Rationale for Slight Relaxation
+- Polling interval (1 ms) and general-purpose CI scheduling can inflate latency distribution; buffer allows stability while still catching regressions.
+
+### Next
+- Phase 6 (fault injection) will reuse this latency infrastructure to observe impact of drops / pauses.
 
 ---
 ## Phase 6: Fault Injection (Sensor Drop / Stutter)
