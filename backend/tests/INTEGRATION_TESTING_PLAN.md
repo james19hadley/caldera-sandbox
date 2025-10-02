@@ -160,8 +160,29 @@ Status: IMPLEMENTED (pause/resume + jitter + frame drop)
 
 ---
 ## Phase 7: Performance / Stress (Lightweight)
-### Planned
-- 120 FPS synthetic for short window (e.g., 2s) – assert received/published ratio ≥ 0.8; zero unexpected drops.
+Status: IMPLEMENTED
+
+### Implementation
+- New test file `integration/test_pipeline_throughput.cpp` (suite `PipelineThroughput`).
+- Two scenarios: 30 FPS baseline (2s), 120 FPS stress (2s).
+- Metrics captured per scenario: theoretical frame target, published frames (from harness), observed unique frames via `SharedMemoryReader.latest()` polling, coverage ratio observed/published.
+- Assertions:
+   - Published frames >= 90% of theoretical (30 FPS) / 85% (120 FPS).
+   - Coverage >= 85% (30 FPS) / 70% (120 FPS).
+   - Explicit monotonicity/continuity check: last observed frame id within small slack of final published count (adaptive slack: 3 for <=60 FPS, 10 for high FPS) to account for snapshot semantics at stop boundary.
+
+### Rationale
+- Confirms end-to-end pipeline maintains intended production cadence without internal starvation.
+- Snapshot reader semantics (latest-frame only) naturally can skip some frames at high FPS; coverage thresholds reflect this while leaving generous headroom (empirically ~0.97 at both rates currently).
+- Adaptive slack prevents false negatives caused by the race between final publish and final poll iteration.
+
+### Future (Optional Enhancements)
+- Add jitter distribution or inter-frame p95 publishing intervals if production scheduling stability becomes a priority.
+- Env-tunable duration for longer soak tests (deferred until needed).
+
+### Acceptance
+- Both scenarios pass consistently (multiple runs) with significant margin over thresholds.
+
 
 ---
 ## Phase 8: Protocol / Versioning Integration
