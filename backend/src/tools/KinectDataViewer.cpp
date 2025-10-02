@@ -18,7 +18,7 @@ using namespace caldera::backend::hal;
 using namespace caldera::backend::common;
 
 KinectDataViewer::KinectDataViewer(SensorType type, ViewMode mode) 
-    : sensorType_(type), viewMode_(mode), kinect_device_(nullptr) {
+    : sensorType_(type), viewMode_(mode) {
     
     // Auto-detect or create specified sensor type
     if (sensorType_ == SensorType::AUTO_DETECT) {
@@ -29,33 +29,33 @@ KinectDataViewer::KinectDataViewer(SensorType type, ViewMode mode)
     
     switch (sensorType_) {
         case SensorType::KINECT_V2:
-            kinect_device_ = new caldera::backend::hal::KinectV2_Device();
+            sensor_device_ = std::make_unique<caldera::backend::hal::KinectV2_Device>();
             std::cout << "Initializing Kinect V2 sensor..." << std::endl;
             break;
         case SensorType::KINECT_V1:
         {
 #if CALDERA_HAVE_KINECT_V1
-            kinect_device_ = new caldera::backend::hal::KinectV1_Device();
+            sensor_device_ = std::make_unique<caldera::backend::hal::KinectV1_Device>();
             std::cout << "Initializing Kinect V1 sensor..." << std::endl;
 #else
             std::cerr << "Built without Kinect V1 support (CALDERA_HAVE_KINECT_V1=0)" << std::endl;
-            kinect_device_ = nullptr;
+            sensor_device_.reset();
 #endif
         }
             break;
         case SensorType::PLAYBACK_FILE:
             // Should not reach here - use playback constructor
             std::cerr << "Error: Use playback constructor for file playback" << std::endl;
-            kinect_device_ = nullptr;
+            sensor_device_.reset();
             break;
         default:
-            kinect_device_ = nullptr;
+            sensor_device_.reset();
             break;
     }
 }
 
 KinectDataViewer::KinectDataViewer(const std::string& dataFile, ViewMode mode)
-    : sensorType_(SensorType::PLAYBACK_FILE), viewMode_(mode), kinect_device_(nullptr), playback_file_(dataFile) {
+    : sensorType_(SensorType::PLAYBACK_FILE), viewMode_(mode), playback_file_(dataFile) {
     
     std::cout << "Initializing playback from file: " << dataFile << std::endl;
     
@@ -309,9 +309,8 @@ size_t KinectDataViewer::getPlaybackFrameCount() const {
 caldera::backend::hal::ISensorDevice* caldera::backend::tools::KinectDataViewer::getCurrentDevice() const {
     if (sensorType_ == SensorType::PLAYBACK_FILE) {
         return mock_device_.get();
-    } else {
-        return kinect_device_;
     }
+    return sensor_device_.get();
 }
 
 } // namespace caldera::backend::tools

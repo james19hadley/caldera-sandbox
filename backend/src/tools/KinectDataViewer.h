@@ -8,6 +8,7 @@
 
 namespace caldera::backend::hal {
     class KinectV2_Device;
+    class KinectV1_Device;
     class SensorRecorder;
     class MockSensorDevice;
     class ISensorDevice;
@@ -127,8 +128,8 @@ private:
     std::atomic<bool> stop_called_{false};
     std::unique_ptr<std::thread> viewer_thread_;
     
-    // Device pointers (only one will be used)
-    caldera::backend::hal::KinectV2_Device* kinect_device_;  
+    // Active live sensor device (v1 or v2) when not in playback mode
+    std::unique_ptr<caldera::backend::hal::ISensorDevice> sensor_device_;
     std::unique_ptr<caldera::backend::hal::MockSensorDevice> mock_device_;
     
     // Playback file path (for playback mode)
