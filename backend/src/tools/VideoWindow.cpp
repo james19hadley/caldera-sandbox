@@ -264,4 +264,11 @@ void VideoWindow::pollEvents() {
     glfwPollEvents();
 }
 
+void VideoWindow::show() {
+    if (window_) {
+        // If texture not yet created, just make window visible so user sees it is alive
+        glfwShowWindow(window_);
+    }
+}
+
 } // namespace caldera::backend::tools

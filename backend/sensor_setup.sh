@@ -291,17 +291,17 @@ test_sensors() {
     
     local lsusb_output=$(lsusb)
 
-    # Kinect v2 quick test via KinectViewer if built
+    # Kinect v2 quick test via SensorViewer if built
     if echo "$lsusb_output" | grep -q "045e:02c4"; then
-        if [ -f "build/KinectViewer" ]; then
-            echo "Running KinectViewer for 2 seconds..."
-            if timeout 3 ./build/KinectViewer -t 2 >/dev/null 2>&1; then
+        if [ -f "build/SensorViewer" ]; then
+            echo "Running SensorViewer for 2 seconds..."
+            if timeout 3 ./build/SensorViewer -t 2 >/dev/null 2>&1; then
                 echo -e "${GREEN}✓ Kinect V2 working - got data frames${NC}"
             else
-                echo -e "${YELLOW}⚠ KinectViewer test failed - check permissions${NC}"
+                echo -e "${YELLOW}⚠ SensorViewer test failed - check permissions${NC}"
             fi
         else
-            echo -e "${YELLOW}KinectViewer not built - run: ./build.sh KinectViewer${NC}"
+            echo -e "${YELLOW}SensorViewer not built - run: ./build.sh SensorViewer${NC}"
         fi
     fi
 

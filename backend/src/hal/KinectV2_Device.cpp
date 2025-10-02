@@ -11,6 +11,7 @@ KinectV2_Device::KinectV2_Device() {
 }
 
 KinectV2_Device::~KinectV2_Device() {
+    // Ensure resources are released. close() is idempotent via isRunning() guard.
     close();
 }
 
@@ -38,18 +39,50 @@ bool KinectV2_Device::open() {
     std::string loggerName = std::string(caldera::backend::logging_names::HAL_KINECT_V2) + "." + serial_;
     logger_ = caldera::backend::common::Logger::instance().get(loggerName);
 
-    // Open the device
-    device_ = freenect2_.openDevice(serial_);
+    // Optional pipeline override (only 'cpu' supported explicitly). Otherwise let libfreenect2 auto-detect.
+    const char* pipeline_env = std::getenv("CALDERA_KINECT_V2_PIPELINE");
+    std::string pipeline_choice = pipeline_env ? pipeline_env : "";
+    for (auto &c : pipeline_choice) c = (char)tolower(c);
+    if (pipeline_choice == "cpu") {
+        logger_->info("Using forced CPU packet pipeline (CALDERA_KINECT_V2_PIPELINE=cpu)");
+        pipeline_ = new libfreenect2::CpuPacketPipeline();
+        device_ = freenect2_.openDevice(serial_, pipeline_);
+    } else if (!pipeline_choice.empty()) {
+        logger_->warn("Unsupported CALDERA_KINECT_V2_PIPELINE='{}' (only 'cpu' recognized) - falling back to auto-detect", pipeline_choice);
+        device_ = freenect2_.openDevice(serial_);
+    } else {
+        device_ = freenect2_.openDevice(serial_);
+    }
+    // Fallback: if auto-detect failed, try CPU pipeline once.
+    if (!device_) {
+        logger_->warn("Primary openDevice failed, retrying with CPU pipeline fallback");
+        pipeline_ = new libfreenect2::CpuPacketPipeline();
+        device_ = freenect2_.openDevice(serial_, pipeline_);
+    }
     if (!device_) {
         logger_->critical("Failed to open Kinect device with serial: {}", serial_);
         return false;
     }
 
-    // Create frame listener for color and depth
-    listener_ = new libfreenect2::SyncMultiFrameListener(libfreenect2::Frame::Color | libfreenect2::Frame::Depth);
-    
-    // Set listener on device
-    device_->setColorFrameListener(listener_);
+    // Diagnostics: verify pipeline type (best-effort RTTI)
+    if (pipeline_choice == "cpu" && pipeline_) {
+        std::string rtti_name = typeid(*pipeline_).name();
+        if (rtti_name.find("CpuPacketPipeline") == std::string::npos) {
+            logger_->warn("Requested CPU pipeline but actual pipeline type is '{}'", rtti_name);
+        }
+    }
+
+    bool disable_color = false;
+    if (const char* dc = std::getenv("CALDERA_KINECT_V2_DISABLE_COLOR")) {
+        std::string v(dc); for (auto &c: v) c=(char)tolower(c);
+        if (v=="1"||v=="true"||v=="yes"||v=="on") disable_color = true;
+    }
+    if (disable_color) {
+        logger_->info("Color stream disabled via CALDERA_KINECT_V2_DISABLE_COLOR");
+    }
+    int frame_types = libfreenect2::Frame::Depth | (disable_color ? 0 : libfreenect2::Frame::Color);
+    listener_ = new libfreenect2::SyncMultiFrameListener(frame_types);
+    if (!disable_color) device_->setColorFrameListener(listener_);
     device_->setIrAndDepthFrameListener(listener_);
 
     // Start the device
@@ -81,18 +114,19 @@ void KinectV2_Device::close() {
         capture_thread_.join();
     }
 
-    // Stop and close the device
+    // Stop and close the device (do NOT delete pointer explicitly; libfreenect2 examples
+    // only call stop()/close() and allow process teardown to reclaim memory). Deleting it
+    // here appeared to contribute to shutdown instability.
     if (device_) {
-        device_->stop();
-        device_->close();
+        logger_->debug("KinectV2_Device::close stopping device");
+        try { device_->stop(); } catch(...) { logger_->warn("Exception during device stop"); }
+        try { device_->close(); } catch(...) { logger_->warn("Exception during device close"); }
+        // Don't delete device explicitly; libfreenect2 manages device lifetime post-close.
         device_ = nullptr;
     }
 
     // Clean up the listener
-    if (listener_) {
-        delete listener_;
-        listener_ = nullptr;
-    }
+    if (listener_) { delete listener_; listener_ = nullptr; }
 
     logger_->info("KinectV2_Device shutdown completed");
 }
@@ -104,13 +138,13 @@ void KinectV2_Device::captureLoop() {
         libfreenect2::FrameMap frames;
         
         // Wait for new frame with 10 second timeout
-        if (!listener_->waitForNewFrame(frames, 10000)) {
+        if (!listener_ || !listener_->waitForNewFrame(frames, 10000)) {
             logger_->error("KinectV2_Device timeout waiting for frame!");
             continue;
         }
         
         // Get color and depth frames
-        libfreenect2::Frame *colorFrame = frames[libfreenect2::Frame::Color];
+    libfreenect2::Frame *colorFrame = frames.count(libfreenect2::Frame::Color) ? frames[libfreenect2::Frame::Color] : nullptr;
         libfreenect2::Frame *depthFrame = frames[libfreenect2::Frame::Depth];
         
         // If we have a callback, create our frame structures
@@ -154,7 +188,7 @@ void KinectV2_Device::captureLoop() {
         }
         
         // Crucial: release frames to prevent memory leaks
-        listener_->release(frames);
+        if (listener_) listener_->release(frames);
     }
     
     logger_->debug("KinectV2_Device capture loop ended");

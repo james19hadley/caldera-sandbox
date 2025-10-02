@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.18)
 project(CalderaBackend)
 
+# Optional sanitizers for debugging (enable with -DCALDERA_ENABLE_ASAN=ON)
+option(CALDERA_ENABLE_ASAN "Enable AddressSanitizer for debugging" OFF)
+if (CALDERA_ENABLE_ASAN)
+    message(STATUS "AddressSanitizer: ENABLED")
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+endif()
+
 # --- Find Dependencies ---
 find_package(spdlog CONFIG REQUIRED)
 find_package(GTest CONFIG REQUIRED)
@@ -145,25 +153,27 @@ else()
     target_compile_definitions(SensorBackend PRIVATE CALDERA_TRANSPORT_SOCKETS=0)
 endif()
 
-# Kinect Data Viewer Tool
-add_executable(KinectViewer
-    src/tools/kinect_viewer_main.cpp
-    src/tools/KinectDataViewer.cpp
+## Sensor Viewer Tool (multi-sensor viewer utility)
+add_executable(SensorViewer
+    src/tools/sensor_viewer_main.cpp
+    src/tools/SensorViewerCore.cpp
     src/tools/SimpleViewer.cpp
     src/tools/VideoWindow.cpp
+    src/tools/SensorEnumerator.cpp
 )
 
-target_include_directories(KinectViewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(SensorViewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # Find OpenGL and GLFW for video windows
 find_package(OpenGL REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 
-target_link_libraries(KinectViewer PRIVATE 
+target_link_libraries(SensorViewer PRIVATE 
     caldera_backend_core 
     OpenGL::GL 
     glfw
 )
+
 
 # Kinect v1 control CLI (LED/Tilt) using vendored libfreenect
 add_executable(KinectV1Ctl

@@ -38,6 +38,11 @@ public:
      */
     void pollEvents();
 
+    /**
+     * @brief Force the window to become visible immediately (useful if first frame is delayed)
+     */
+    void show();
+
 private:
     GLFWwindow* window_;
     std::string title_;

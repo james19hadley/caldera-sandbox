@@ -43,18 +43,18 @@ using ColorFrameCallback = std::function<void(const caldera::backend::common::Ra
  * This utility opens available Kinect devices and displays depth/color data.
  * Supports Kinect V2 (current) and prepared for Kinect V1 (future).
  */
-class KinectDataViewer {
+class SensorViewerCore {
 public:
-    explicit KinectDataViewer(SensorType type = SensorType::AUTO_DETECT, ViewMode mode = ViewMode::TEXT_ONLY);
+    explicit SensorViewerCore(SensorType type = SensorType::AUTO_DETECT, ViewMode mode = ViewMode::TEXT_ONLY);
     
     /**
      * @brief Constructor for playback mode
      * @param dataFile Path to recorded data file 
      * @param mode View mode
      */
-    explicit KinectDataViewer(const std::string& dataFile, ViewMode mode = ViewMode::TEXT_ONLY);
+    explicit SensorViewerCore(const std::string& dataFile, ViewMode mode = ViewMode::TEXT_ONLY);
     
-    ~KinectDataViewer() noexcept;
+    ~SensorViewerCore() noexcept;
 
     /**
      * @brief Start the viewer
