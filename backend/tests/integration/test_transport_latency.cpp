@@ -14,6 +14,7 @@
 #include "IntegrationHarness.h"
 #include "transport/SharedMemoryReader.h"
 #include "common/Checksum.h"
+#include "common/Logger.h"
 
 using namespace std::chrono_literals;
 using caldera::backend::hal::SyntheticSensorDevice;
@@ -43,6 +44,8 @@ double p95(std::vector<double> v) {
 
 TEST(TransportLatency, SingleSensorLatencyP95WithinBudget) {
     using clock = std::chrono::steady_clock;
+
+    // Rely on global test logger initialization strategy (other tests may have set level).
     caldera::backend::tests::IntegrationHarness harness;
     SyntheticSensorDevice::Config scfg;
     scfg.width = 16; scfg.height = 16; scfg.fps = 30.0; scfg.pattern = SyntheticSensorDevice::Pattern::RAMP;
