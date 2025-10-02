@@ -4,25 +4,24 @@
 #include <thread>
 
 #include "IntegrationHarness.h"
-#include "transport/SharedMemoryReader.h"
+#include "helpers/TestCalderaClient.h"
 
 using namespace std::chrono_literals;
 using caldera::backend::tests::IntegrationHarness;
 using caldera::backend::tests::HarnessConfig;
 using caldera::backend::hal::SyntheticSensorDevice;
-using caldera::backend::transport::SharedMemoryReader;
 
 static void regenerateRamp(int w, int h, std::vector<uint16_t>& out) {
     out.resize(static_cast<size_t>(w) * h);
     for (int y=0; y<h; ++y) for (int x=0; x<w; ++x) out[static_cast<size_t>(y)*w + x] = static_cast<uint16_t>(x + y);
 }
 
-// Collect one new frame with timeout
-static std::optional<caldera::backend::transport::SharedMemoryReader::FrameView> waitFrame(SharedMemoryReader& r, uint64_t& lastId, std::chrono::milliseconds timeout) {
+// Helper: wait for next distinct frame via TestCalderaClient
+static std::optional<TestCalderaClient::FrameView> waitFrame(TestCalderaClient& c, uint64_t& lastId, std::chrono::milliseconds timeout) {
     auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
-        auto opt = r.latest();
-        if (opt && opt->frame_id != lastId) { lastId = opt->frame_id; return opt; }
+        auto f = c.latest();
+        if (f && f->frame_id != lastId) { lastId = f->frame_id; return f; }
         std::this_thread::sleep_for(2ms);
     }
     return std::nullopt;
@@ -35,8 +34,9 @@ static void runScaleCase(float scale) {
     HarnessConfig hc; hc.shm_name = "/caldera_integration_scale"; hc.max_width=16; hc.max_height=16; hc.processing_scale=scale;
     ASSERT_TRUE(harness.start(hc));
 
-    SharedMemoryReader reader(caldera::backend::common::Logger::instance().get("Integration.ScaleReader"));
-    ASSERT_TRUE(reader.open(hc.shm_name, hc.max_width, hc.max_height));
+    auto rlog = caldera::backend::common::Logger::instance().get("Integration.ScaleReader");
+    TestCalderaClient client(rlog);
+    ASSERT_TRUE(client.connectData(TestCalderaClient::ShmDataConfig{hc.shm_name, static_cast<uint32_t>(hc.max_width), static_cast<uint32_t>(hc.max_height), true, 2000}));
 
     std::vector<uint16_t> pattern; regenerateRamp(sc.width, sc.height, pattern);
     std::vector<float> expected(pattern.size());
@@ -45,7 +45,7 @@ static void runScaleCase(float scale) {
     uint64_t lastId = UINT64_MAX;
     int okFrames = 0;
     while (okFrames < 5) {
-        auto f = waitFrame(reader, lastId, 1500ms);
+        auto f = waitFrame(client, lastId, 1500ms);
         ASSERT_TRUE(f.has_value()) << "Timed out waiting for frame";
         ASSERT_EQ(f->width, sc.width);
         ASSERT_EQ(f->height, sc.height);

@@ -8,11 +8,10 @@
 #include <limits>
 
 #include "IntegrationHarness.h"
-#include "transport/SharedMemoryReader.h"
+#include "helpers/TestCalderaClient.h"
 
 using namespace std::chrono_literals;
 using caldera::backend::hal::SyntheticSensorDevice;
-using caldera::backend::transport::SharedMemoryReader;
 
 TEST(FaultInjection, JitterAndDropBehavior) {
     caldera::backend::tests::IntegrationHarness harness;
@@ -25,15 +24,15 @@ TEST(FaultInjection, JitterAndDropBehavior) {
     sensor->configureFaultInjection({4, 3, 0x1234}); // drop every 4th produced frame, jitter up to 3ms
 
     auto logger = caldera::backend::common::Logger::instance().get("Test.FaultInjection");
-    SharedMemoryReader reader(logger);
-    ASSERT_TRUE(reader.open(hcfg.shm_name, hcfg.max_width, hcfg.max_height));
+    TestCalderaClient client(logger);
+    ASSERT_TRUE(client.connectData(TestCalderaClient::ShmDataConfig{hcfg.shm_name, static_cast<uint32_t>(hcfg.max_width), static_cast<uint32_t>(hcfg.max_height), true, 2000}));
 
     const int targetEmitted = 40; // collect 40 delivered frames
     std::vector<uint64_t> frameIds; frameIds.reserve(targetEmitted);
     uint64_t last_id = std::numeric_limits<uint64_t>::max();
     auto deadline = std::chrono::steady_clock::now() + 5s;
     while ((int)frameIds.size() < targetEmitted && std::chrono::steady_clock::now() < deadline) {
-        if (auto fv = reader.latest()) {
+        if (auto fv = client.latest()) {
             if (fv->frame_id != last_id) {
                 frameIds.push_back(fv->frame_id);
                 last_id = fv->frame_id;
@@ -56,5 +55,8 @@ TEST(FaultInjection, JitterAndDropBehavior) {
         EXPECT_EQ(s.dropped, s.produced - s.emitted);
     }
 
+    // Optional: gap stats should be zero since processing fills drops, continuity maintained
+    auto stats = client.stats();
+    EXPECT_EQ(stats.max_gap, 0u);
     harness.stop();
 }

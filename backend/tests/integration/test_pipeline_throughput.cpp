@@ -9,14 +9,13 @@
 #include <atomic>
 
 #include "IntegrationHarness.h"
-#include "transport/SharedMemoryReader.h"
+#include "helpers/TestCalderaClient.h"
 #include "common/Logger.h"
 
 using namespace std::chrono_literals;
 using caldera::backend::tests::IntegrationHarness;
 using caldera::backend::tests::HarnessConfig;
 using caldera::backend::hal::SyntheticSensorDevice;
-using caldera::backend::transport::SharedMemoryReader;
 
 namespace {
 struct ThroughputCase { double fps; double duration_sec; double min_published_ratio; double min_coverage_ratio; };
@@ -29,8 +28,8 @@ void runThroughputCase(const ThroughputCase& tc) {
     ASSERT_TRUE(harness.start(hc));
 
     auto log = caldera::backend::common::Logger::instance().get("Test.Phase7.Throughput." + std::to_string((int)tc.fps));
-    SharedMemoryReader reader(log);
-    ASSERT_TRUE(reader.open(hc.shm_name, hc.max_width, hc.max_height));
+    TestCalderaClient client(log);
+    ASSERT_TRUE(client.connectData(TestCalderaClient::ShmDataConfig{hc.shm_name, static_cast<uint32_t>(hc.max_width), static_cast<uint32_t>(hc.max_height), true, 2000}));
 
     const auto test_duration = std::chrono::duration<double>(tc.duration_sec);
     auto t_start = std::chrono::steady_clock::now();
@@ -38,7 +37,7 @@ void runThroughputCase(const ThroughputCase& tc) {
     uint64_t last_id = std::numeric_limits<uint64_t>::max();
     uint64_t observed = 0;
     while (std::chrono::steady_clock::now() < t_end) {
-        if (auto opt = reader.latest()) {
+        if (auto opt = client.latest()) {
             if (opt->frame_id != last_id) {
                 last_id = opt->frame_id;
                 ++observed;
@@ -74,6 +73,9 @@ void runThroughputCase(const ThroughputCase& tc) {
             EXPECT_GE(last_id, published - slack) << "Last observed frame id too far behind published count (slack=" << slack << ")";
         }
     }
+    auto st = client.stats();
+    log->info("Client stats: distinct={} observed={} max_gap={} skipped={} checksum_present={} verified={} mismatch={} latency_samples={}",
+              st.distinct_frames, st.frames_observed, st.max_gap, st.total_skipped, st.checksum_present, st.checksum_verified, st.checksum_mismatch, st.latency_samples);
 }
 } // namespace
 

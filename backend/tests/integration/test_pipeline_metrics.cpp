@@ -30,7 +30,15 @@ static void run_basic_metrics(bool inject_drop) {
 
     // Optional drop injection: pause briefly mid run to simulate lost upstream frames (no actual drop logic yet, so we simulate by pausing sensor if available in future).
     std::this_thread::sleep_for(500ms);
+    // Allow a short settle window for processing/publish to catch up with sensor emission.
+    // This avoids transient races where frames_in is ahead of frames_out by 1 while a frame is in-flight.
     auto st = harness.stats();
+    auto settle_deadline = std::chrono::steady_clock::now() + 150ms;
+    while (std::chrono::steady_clock::now() < settle_deadline) {
+        if (st.frames_out == st.frames_in && st.frames_published == st.frames_out) break;
+        std::this_thread::sleep_for(10ms);
+        st = harness.stats();
+    }
     ASSERT_GT(st.frames_in, 0u);
     if (!inject_drop) {
         ASSERT_EQ(st.frames_in, st.frames_out) << "No processing loss expected";

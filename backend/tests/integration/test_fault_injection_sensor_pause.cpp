@@ -9,11 +9,10 @@
 #include <limits>
 
 #include "IntegrationHarness.h"
-#include "transport/SharedMemoryReader.h"
+#include "helpers/TestCalderaClient.h"
 
 using namespace std::chrono_literals;
 using caldera::backend::hal::SyntheticSensorDevice;
-using caldera::backend::transport::SharedMemoryReader;
 
 TEST(FaultInjection, SensorPauseResumeBasic) {
     caldera::backend::tests::IntegrationHarness harness;
@@ -25,8 +24,8 @@ TEST(FaultInjection, SensorPauseResumeBasic) {
     ASSERT_TRUE(harness.start(hcfg));
 
     auto logger = caldera::backend::common::Logger::instance().get("Test.FaultInjection");
-    SharedMemoryReader reader(logger);
-    ASSERT_TRUE(reader.open(hcfg.shm_name, hcfg.max_width, hcfg.max_height));
+    TestCalderaClient client(logger);
+    ASSERT_TRUE(client.connectData(TestCalderaClient::ShmDataConfig{hcfg.shm_name, static_cast<uint32_t>(hcfg.max_width), static_cast<uint32_t>(hcfg.max_height), true, 2000}));
 
     auto* sensor = harness.syntheticSensor(0);
     ASSERT_NE(sensor, nullptr);
@@ -35,7 +34,7 @@ TEST(FaultInjection, SensorPauseResumeBasic) {
     int received = 0;
     auto start = std::chrono::steady_clock::now();
     while (received < 5 && std::chrono::steady_clock::now() - start < 2s) {
-        if (auto fv = reader.latest()) {
+        if (auto fv = client.latest()) {
             if (fv->frame_id != last_frame_id) {
                 last_frame_id = fv->frame_id;
                 ++received;
@@ -50,7 +49,7 @@ TEST(FaultInjection, SensorPauseResumeBasic) {
     // Verify pause holds
     bool advanced = false; auto pause_check_start = std::chrono::steady_clock::now();
     while (std::chrono::steady_clock::now() - pause_check_start < 200ms) {
-        if (auto fv = reader.latest(); fv && fv->frame_id != paused_id) { advanced = true; break; }
+        if (auto fv = client.latest(); fv && fv->frame_id != paused_id) { advanced = true; break; }
         std::this_thread::sleep_for(5ms);
     }
     EXPECT_FALSE(advanced) << "Frame id advanced while sensor manually paused";
@@ -62,7 +61,7 @@ TEST(FaultInjection, SensorPauseResumeBasic) {
     uint64_t last_after = paused_id;
     auto resume_deadline = std::chrono::steady_clock::now() + 2s;
     while (post < 5 && std::chrono::steady_clock::now() < resume_deadline) {
-        if (auto fv = reader.latest()) {
+        if (auto fv = client.latest()) {
             if (fv->frame_id != last_after) {
                 EXPECT_GT(fv->frame_id, last_after);
                 last_after = fv->frame_id;
@@ -72,5 +71,8 @@ TEST(FaultInjection, SensorPauseResumeBasic) {
         std::this_thread::sleep_for(2ms);
     }
     EXPECT_EQ(post, 5) << "Did not receive 5 frames after resume";
+    // Gap stats sanity: during pause we expect no gaps reported (no frames advancing), after resume continuity should hold.
+    auto s = client.stats();
+    EXPECT_EQ(s.checksum_mismatch, 0u);
     harness.stop();
 }

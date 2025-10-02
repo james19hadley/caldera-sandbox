@@ -133,8 +133,23 @@ void SharedMemoryTransportServer::sendWorldFrame(const caldera::backend::common:
         }
     }
     last_publish_ts_ns_ = now_ns;
-    if (logger_->should_log(spdlog::level::debug)) {
-        logger_->debug("SHM wrote frame id={} idx={} size={}x{} floats={} active={}", meta.frame_id, write_index, meta.width, meta.height, meta.float_count, hdr->active_index);
+    // Structured / sampled per-frame logging to reduce noise in tests.
+    // Environment controls (read once per process):
+    //  - CALDERA_LOG_FRAME_TRACE_EVERY=N : sample interval (shared with ProcessingManager). If missing/<=0 -> default 1 (every frame) for backward compatibility.
+    //  - CALDERA_COMPACT_FRAME_LOG=1     : switch to a single structured summary line (INFO level) instead of multiple debug/trace lines.
+    // If CALDERA_LOG_FRAME_TRACE_EVERY <= 0 we fully suppress per-frame logs (unlike earlier behavior
+    // which defaulted to 1). This enables tests to turn off frame spam by setting the env to 0.
+    static int sampleEvery = [](){ if(const char* env = std::getenv("CALDERA_LOG_FRAME_TRACE_EVERY")) { int v = std::atoi(env); return v; } return 1; }();
+    static bool compact = [](){ const char* env = std::getenv("CALDERA_COMPACT_FRAME_LOG"); return env && std::string(env) == "1"; }();
+    if (sampleEvery > 0 && (meta.frame_id % sampleEvery) == 0) {
+        if (compact) {
+            // Compact single-line summary (JSON-ish but without quotes to stay lightweight)
+            // Using info level so it shows even if debug disabled when compact mode requested.
+            logger_->info("FRAME id={} size={}x{} floats={} buf_idx={} active={} checksum={} fps={:.1f}",
+                          meta.frame_id, meta.width, meta.height, meta.float_count, write_index, hdr->active_index, meta.checksum, stats_.last_publish_fps);
+        } else if (logger_->should_log(spdlog::level::debug)) {
+            logger_->debug("SHM wrote frame id={} idx={} size={}x{} floats={} active={}", meta.frame_id, write_index, meta.width, meta.height, meta.float_count, hdr->active_index);
+        }
     }
 }
 

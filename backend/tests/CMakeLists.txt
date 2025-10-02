@@ -42,8 +42,11 @@ add_executable(CalderaTests
     integration/test_pipeline_throughput.cpp
     integration/test_transport_midstream_attach.cpp
     integration/test_pipeline_metrics.cpp
+    integration/test_process_shm_blackbox.cpp
+    integration/test_worldframe_client_shm.cpp
     # helpers (non-test utilities referenced by tests)
     helpers/TestLocalTransportClient.cpp
+    helpers/TestCalderaClient.cpp
     # Disabled (require hardware / pending fixes)
     # sensor/test_sensor_kinect_data_viewer.cpp
     # sensor/test_kinect_data_validation.cpp
@@ -56,6 +59,8 @@ add_executable(CalderaHeavyTests
     performance/test_performance_pipeline_robust.cpp
     performance/test_performance_shm_benchmark.cpp
     performance/test_performance_shm_throughput_verified.cpp
+    # helpers used by performance tests
+    helpers/TestCalderaClient.cpp
 )
 
 # Let CTest discover individual GoogleTest test cases instead of a single umbrella test.
@@ -89,3 +94,10 @@ target_compile_definitions(CalderaTests PRIVATE SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL
 
 set_target_properties(CalderaTests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
 set_target_properties(CalderaHeavyTests PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED YES)
+
+# Include source directories for headers in heavy tests as well
+target_include_directories(CalderaHeavyTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/helpers
+)

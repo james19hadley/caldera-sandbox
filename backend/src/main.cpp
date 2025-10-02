@@ -6,8 +6,11 @@
 #include "hal/MockSensorDevice.h"
 #include "hal/KinectV2_Device.h"
 #include "hal/KinectV1_Device.h"
+#include "hal/SyntheticSensorDevice.h"
 #include "processing/ProcessingManager.h"
 #include "transport/LocalTransportServer.h"
+#include "transport/SharedMemoryTransportServer.h"
+#include "transport/SocketTransportServer.h"
 
 #include <exception>
 #include <thread>
@@ -61,19 +64,49 @@ int main() {
 			std::string file = path ? path : "test_sensor_data.dat";
 			device = std::make_unique<hal::MockSensorDevice>(file);
 			halLog->info("Factory: using MockSensorDevice playback file={} (ONCE)", file);
+		} else if (sensor == "synthetic") {
+            hal::SyntheticSensorDevice::Config cfg; // small deterministic config
+            cfg.sensorId = "proc_synth";
+            cfg.width = 32; cfg.height = 24; cfg.fps = 30.0f; cfg.pattern = hal::SyntheticSensorDevice::Pattern::RAMP;
+            device = std::make_unique<hal::SyntheticSensorDevice>(cfg, halLog);
+            halLog->info("Factory: using SyntheticSensorDevice size={}x{} fps={}", cfg.width, cfg.height, cfg.fps);
 		} else { // fallback
 			device = std::make_unique<hal::MockSensorDevice>("unused.dat");
 			halLog->info("Factory: using MockSensorDevice (synthetic; file load may fail if missing)");
 		}
 
 		auto processing = std::make_shared<processing::ProcessingManager>(procOrchLog, fusionLog);
-		auto transport = std::make_shared<transport::LocalTransportServer>(transportLog, handshakeLog);
+		// Transport selection: CALDERA_TRANSPORT=shm|socket|local (default local)
+		std::string transportType = [](){ const char* v = std::getenv("CALDERA_TRANSPORT"); return v?std::string(v):std::string("local"); }();
+		std::shared_ptr<transport::ITransportServer> transport;
+		if (transportType == "shm") {
+			transport::SharedMemoryTransportServer::Config cfg;
+			const char* shmName = std::getenv("CALDERA_SHM_NAME");
+			cfg.shm_name = shmName ? shmName : "/caldera_backend_process";
+			const char* maxW = std::getenv("CALDERA_SHM_MAX_WIDTH");
+			const char* maxH = std::getenv("CALDERA_SHM_MAX_HEIGHT");
+			if (const char* ci = std::getenv("CALDERA_SHM_CHECKSUM_INTERVAL_MS")) { cfg.checksum_interval_ms = static_cast<uint32_t>(std::atoi(ci)); }
+			if (maxW) cfg.max_width = std::atoi(maxW);
+			if (maxH) cfg.max_height = std::atoi(maxH);
+			transport = std::make_shared<transport::SharedMemoryTransportServer>(transportLog, cfg);
+			transportLog->info("Using SharedMemoryTransportServer name={} size={}x{} checksum_interval_ms={}", cfg.shm_name, cfg.max_width, cfg.max_height, cfg.checksum_interval_ms);
+		} else if (transportType == "socket") {
+			transport::SocketTransportServer::Config cfg;
+			if (const char* ep = std::getenv("CALDERA_SOCKET_ENDPOINT")) cfg.endpoint = ep;
+			if (const char* ci = std::getenv("CALDERA_SOCKET_CHECKSUM_INTERVAL_MS")) cfg.checksum_interval_ms = static_cast<uint32_t>(std::atoi(ci));
+			transport = std::make_shared<transport::SocketTransportServer>(transportLog, cfg);
+			transportLog->info("Using SocketTransportServer endpoint={} checksum_interval_ms={}", cfg.endpoint, cfg.checksum_interval_ms);
+		} else {
+			transport = std::make_shared<transport::LocalTransportServer>(transportLog, handshakeLog);
+			transportLog->info("Using LocalTransportServer (in-proc FIFO)");
+		}
 
 		AppManager app(appLog, std::move(device), processing, transport);
 		app.start();
 
-		// Mock run loop
-		std::this_thread::sleep_for(std::chrono::seconds(2));
+		// Run loop duration override via CALDERA_RUN_SECS (default 2)
+		int runSecs = 2; if (const char* rs = std::getenv("CALDERA_RUN_SECS")) { try { runSecs = std::max(1, std::stoi(rs)); } catch(...) {} }
+		std::this_thread::sleep_for(std::chrono::seconds(runSecs));
 		app.stop();
 	} catch (const std::exception& ex) {
 		Logger::instance().get(APP_LIFECYCLE)->critical(std::string("Fatal exception: ") + ex.what());

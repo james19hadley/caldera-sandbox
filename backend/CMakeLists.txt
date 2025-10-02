@@ -65,7 +65,9 @@ add_library(caldera_backend_core STATIC
     src/transport/HandshakeServer.cpp
     src/transport/SharedMemoryTransportServer.cpp
     src/transport/SharedMemoryReader.cpp
+    src/transport/SharedMemoryWorldFrameClient.cpp
     src/transport/FifoManager.cpp
+    src/transport/SocketTransportServer.cpp
     src/AppManager.cpp
 )
 

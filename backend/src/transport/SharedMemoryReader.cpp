@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstring>
+#include "common/Checksum.h"
 
 namespace caldera::backend::transport {
 
@@ -41,7 +42,26 @@ std::optional<SharedMemoryReader::FrameView> SharedMemoryReader::latest() {
     FrameView fv{ meta.frame_id, meta.timestamp_ns, meta.width, meta.height,
                   reinterpret_cast<const float*>(base), meta.float_count, meta.checksum,
                   hdr->checksum_algorithm };
+    // Defer checksum verification to caller (explicit verifyChecksum call) to avoid per-poll cost when unneeded.
     return fv;
+}
+
+bool SharedMemoryReader::verifyChecksum(FrameView &fv) {
+    if (fv.checksum_algorithm == 0 || fv.checksum == 0) {
+        fv.checksum_valid = true; // treat as not required / absent
+        return true;
+    }
+    if (fv.data == nullptr || fv.float_count == 0) { fv.checksum_valid = false; return false; }
+    if (fv.checksum_algorithm == 1) { // CRC32
+        // Fast path: compute CRC directly over the shared memory float buffer (no copy).
+        // We purposely rely on the pointer variant of crc32() to avoid per-frame allocation.
+        uint32_t computed = caldera::backend::common::crc32(fv.data, fv.float_count);
+        fv.checksum_valid = (computed == fv.checksum);
+        return fv.checksum_valid;
+    }
+    // Unknown algorithm -> mark valid (non-fatal) but caller could treat as warning
+    fv.checksum_valid = true;
+    return true;
 }
 
 } // namespace caldera::backend::transport

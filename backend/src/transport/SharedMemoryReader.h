@@ -24,6 +24,7 @@ public:
         uint32_t float_count = 0;
         uint32_t checksum = 0;
         uint32_t checksum_algorithm = 0;
+        bool checksum_valid = true; // reader may set false if verification performed & failed
     };
 
     explicit SharedMemoryReader(std::shared_ptr<spdlog::logger> logger): logger_(std::move(logger)) {}
@@ -34,6 +35,10 @@ public:
 
     // Returns latest ready frame view (points to live memory) or nullopt if none.
     std::optional<FrameView> latest();
+
+    // Verify checksum for a frame view (if algorithm recognized). Returns true if either
+    // checksum not present (0) or matches. Updates fv.checksum_valid.
+    static bool verifyChecksum(FrameView &fv);
 
 private:
     using BufferMeta = caldera::backend::transport::shm::BufferMeta;

@@ -49,7 +49,9 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
     if (height_filter_) {
         height_filter_->apply(frame.heightMap.data, frame.heightMap.width, frame.heightMap.height);
     }
-    if (fusion_logger_ && fusion_logger_->should_log(spdlog::level::trace)) {
+    // Optional per-frame trace sampling (default disabled). Set CALDERA_LOG_FRAME_TRACE_EVERY=N to enable.
+    static int traceEvery = [](){ if(const char* env = std::getenv("CALDERA_LOG_FRAME_TRACE_EVERY")) { int v = std::atoi(env); return v>0?v:0; } return 0; }();
+    if (traceEvery>0 && fusion_logger_ && fusion_logger_->should_log(spdlog::level::trace) && (frameCounter_ % traceEvery)==0) {
         fusion_logger_->trace("Frame {} depth->height converted N={} min={:.3f} max={:.3f} avg={:.3f}",
             frameCounter_, N, minV, maxV, N ? static_cast<float>(sum / N) : 0.0f);
     }
@@ -58,9 +60,7 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
         orch_logger_->info("WorldFrame#{} stats min={:.3f} max={:.3f} avg={:.3f}",
             frame.frame_id, minV, maxV, N ? static_cast<float>(sum / N) : 0.0f);
     }
-    if (fusion_logger_ && fusion_logger_->should_log(spdlog::level::trace)) {
-    fusion_logger_->trace("Built WorldFrame {} depth->height conversion done", frame.frame_id);
-    }
+    // (Removed redundant second trace line to reduce log noise.)
     ++frameCounter_;
     if (callback_) callback_(frame);
 }
