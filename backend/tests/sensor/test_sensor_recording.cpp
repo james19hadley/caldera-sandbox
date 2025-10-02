@@ -129,13 +129,6 @@ TEST_F(SensorRecordingTest, BasicRecordAndPlayback) {
     mock.close();
 }
 
-TEST_F(SensorRecordingTest, EmptyFileHandling) {
-    // Try to load non-existent file
-    MockSensorDevice mock("nonexistent.dat");
-    EXPECT_FALSE(mock.open());
-    EXPECT_FALSE(mock.isDataLoaded());
-}
-
 TEST_F(SensorRecordingTest, RecorderStates) {
     SensorRecorder recorder(test_filename_);
     

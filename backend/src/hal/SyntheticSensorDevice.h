@@ -14,7 +14,7 @@ namespace caldera::backend::hal {
 
 class SyntheticSensorDevice : public ISensorDevice {
 public:
-    enum class Pattern { RAMP, CONSTANT, CHECKER };
+    enum class Pattern { RAMP, CONSTANT, CHECKER, STRIPES, RADIAL }; // STRIPES: horizontal bands; RADIAL: concentric gradient center-high
     struct Config {
         int width = 16;
         int height = 16;

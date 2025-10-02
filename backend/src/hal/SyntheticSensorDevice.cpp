@@ -74,6 +74,35 @@ void SyntheticSensorDevice::fillPattern(std::vector<uint16_t>& buf) const {
             }
             break;
         }
+        case Pattern::STRIPES: {
+            // Horizontal bands 4 pixels tall alternating high/low to test directional filters later
+            for (int y = 0; y < h; ++y) {
+                bool on = (y / 4) & 1;
+                uint16_t v = on ? 1800 : 600;
+                for (int x = 0; x < w; ++x) {
+                    buf[static_cast<size_t>(y)*w + x] = v;
+                }
+            }
+            break;
+        }
+        case Pattern::RADIAL: {
+            // Concentric circles: intensity decreases with distance from center (scaled to 0..2000)
+            float cx = (w - 1) / 2.0f;
+            float cy = (h - 1) / 2.0f;
+            float maxDist = std::sqrt(cx*cx + cy*cy);
+            if (maxDist < 1e-5f) maxDist = 1.0f;
+            for (int y = 0; y < h; ++y) {
+                for (int x = 0; x < w; ++x) {
+                    float dx = x - cx;
+                    float dy = y - cy;
+                    float d = std::sqrt(dx*dx + dy*dy) / maxDist; // 0..1
+                    float inv = 1.0f - d; // center highest
+                    uint16_t v = static_cast<uint16_t>(std::round(inv * 2000.0f));
+                    buf[static_cast<size_t>(y)*w + x] = v;
+                }
+            }
+            break;
+        }
     }
 }
 

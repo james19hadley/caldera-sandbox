@@ -18,6 +18,7 @@ struct HarnessConfig {
     std::string shm_name = "/caldera_integration_phase0";
     int max_width = 64;
     int max_height = 64;
+    float processing_scale = -1.0f; // if <0 use ProcessingManager default env-based resolution
 };
 
 class IntegrationHarness {
@@ -41,7 +42,7 @@ public:
         transport_->start();
 
         // Processing
-        processing_ = std::make_unique<caldera::backend::processing::ProcessingManager>(logger("Harness.Processing"));
+    processing_ = std::make_unique<caldera::backend::processing::ProcessingManager>(logger("Harness.Processing"), nullptr, harness_cfg_.processing_scale);
         processing_->setWorldFrameCallback([this](const caldera::backend::common::WorldFrame& wf){
             transport_->sendWorldFrame(wf);
             frames_published_.fetch_add(1, std::memory_order_relaxed);

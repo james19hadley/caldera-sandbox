@@ -1,3 +1,4 @@
+// Integration: Synthetic sensor end-to-end pass-through (formerly Phase 0)
 #include <gtest/gtest.h>
 #include <chrono>
 #include <thread>
@@ -23,11 +24,11 @@ static void regenerateRamp(int w, int h, std::vector<uint16_t>& out) {
 // Compute CRC over float buffer bytes (stable representation assumption: IEEE 754, little-endian typical CI/Linux).
 static uint32_t crcFloats(const std::vector<float>& data) { return crc32(data); }
 
-TEST(IntegrationPhase0, SingleSyntheticSensorPassThrough) {
+TEST(SyntheticSensorPipeline, SingleSensorPassThroughRamp) {
     IntegrationHarness harness;
     SyntheticSensorDevice::Config sc; sc.width=16; sc.height=16; sc.fps=30.0; sc.pattern=SyntheticSensorDevice::Pattern::RAMP; sc.sensorId="SynthA";
     harness.addSyntheticSensor(sc);
-    HarnessConfig hc; hc.shm_name = "/caldera_integration_phase0"; hc.max_width=32; hc.max_height=32;
+    HarnessConfig hc; hc.shm_name = "/caldera_integration_synth_pass"; hc.max_width=32; hc.max_height=32;
     ASSERT_TRUE(harness.start(hc));
 
     SharedMemoryReader reader(caldera::backend::common::Logger::instance().get("Integration.Reader"));

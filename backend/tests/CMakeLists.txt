@@ -1,42 +1,55 @@
-# CMake configuration for Caldera backend tests
+##############################
+# Caldera Tests (Categorized)
+##############################
 
 add_executable(CalderaTests
     test_main.cpp
-    test_logger_basic.cpp
-    test_logger_levels.cpp
-    test_pipeline_basic.cpp
-    test_processing_conversion.cpp
-    test_logger_concurrency.cpp
-    test_frame_id_monotonic.cpp
-    test_shm_reader.cpp
-    test_shm_overflow.cpp
-    test_logger_ratelimit.cpp
-    test_kinectv2_device.cpp
-    test_sensor_recording.cpp
-    test_pipeline_failures.cpp
-    test_shm_and_processing_negatives.cpp
-    test_transport_handshake.cpp
-    test_shm_integrity.cpp
-    test_shm_latency.cpp
-    test_shm_extended.cpp
-    test_shm_realistic_fps.cpp
-    test_shm_stats.cpp
-    test_shm_verified_matrix.cpp
-    test_transport_health.cpp
-    test_transport_handshake_stats.cpp
-    test_integration_phase0_basic.cpp
-    TestLocalTransportClient.cpp
-    # test_kinect_data_viewer.cpp       # Disabled due to compilation issues
-    # test_kinect_data_validation.cpp   # Disabled due to compilation issues
+    # logger
+    logger/test_logger_basic.cpp
+    logger/test_logger_levels.cpp
+    logger/test_logger_concurrency.cpp
+    logger/test_logger_ratelimit.cpp
+    # pipeline
+    pipeline/test_pipeline_basic.cpp
+    pipeline/test_pipeline_failures.cpp
+    pipeline/test_pipeline_frame_id_monotonic.cpp
+    # processing
+    processing/test_processing_conversion.cpp
+    processing/test_processing_shm_negatives.cpp
+    # shm
+    shm/test_shm_reader.cpp
+    shm/test_shm_overflow.cpp
+    shm/test_shm_integrity.cpp
+    shm/test_shm_latency.cpp
+    shm/test_shm_extended.cpp
+    shm/test_shm_realistic_fps.cpp
+    shm/test_shm_stats.cpp
+    shm/test_shm_verified_matrix.cpp
+    # transport
+    transport/test_transport_handshake.cpp
+    transport/test_transport_handshake_stats.cpp
+    transport/test_transport_health.cpp
+    # sensor
+    sensor/test_sensor_kinectv2_device.cpp
+    sensor/test_sensor_recording.cpp
+    sensor/test_sensor_mock_negative.cpp
+    # integration
+    integration/test_synthetic_sensor_pass_through.cpp
+    integration/test_processing_scale_semantics.cpp
+    # helpers (non-test utilities referenced by tests)
+    helpers/TestLocalTransportClient.cpp
+    # Disabled (require hardware / pending fixes)
+    # sensor/test_sensor_kinect_data_viewer.cpp
+    # sensor/test_kinect_data_validation.cpp
 )
 
-# Heavy / longer running tests separated to allow fast default cycle
+# Heavy / performance / stress tests
 add_executable(CalderaHeavyTests
     test_main.cpp
-    test_processing_stress.cpp
-    test_pipeline_robust.cpp
-    test_shm_benchmark.cpp
-    test_shm_throughput_verified.cpp
+    performance/test_performance_processing_stress.cpp
+    performance/test_performance_pipeline_robust.cpp
+    performance/test_performance_shm_benchmark.cpp
+    performance/test_performance_shm_throughput_verified.cpp
 )
 
 # Let CTest discover individual GoogleTest test cases instead of a single umbrella test.
@@ -49,7 +62,11 @@ find_package(GTest CONFIG REQUIRED)
 # Alternatively, we could factor SensorBackend sources into a static lib.
 
 # Include source directories for headers
-target_include_directories(CalderaTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+target_include_directories(CalderaTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/helpers
+)
 
 # Link libraries
 # gtest::gtest gtest::gtest_main available when using vcpkg config package

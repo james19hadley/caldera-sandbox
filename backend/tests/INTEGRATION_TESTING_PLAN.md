@@ -56,10 +56,21 @@ Purpose: Deterministic frame generation & unified start/stop harness.
 - Harness idempotent start/stop.
 
 ### Implementation Status (Live Notes)
-- SyntheticSensorDevice implemented (RAMP, CONSTANT, CHECKER) in `hal/`.
+- SyntheticSensorDevice implemented (RAMP, CONSTANT, CHECKER, STRIPES, RADIAL) in `hal/`.
 - IntegrationHarness implemented (single-sensor start/stop, SHM publish via ProcessingManager callback).
-- Phase 0 test `test_integration_phase0_basic.cpp` validates 10 frames (CRC over float data with assumed default scale 0.001).
-- Next: add explicit scale parameter test (Phase 1) and latency measurement (Phase 5) once Phase 0 merged.
+- Pass-through test relocated & renamed: `integration/synthetic_sensor_pass_through.cpp` (suite `SyntheticSensorPipeline.SingleSensorPassThroughRamp`).
+- Next: latency measurement (Phase 5) after confirming scale semantics.
+
+### Pattern Glossary (SyntheticSensorDevice)
+| Pattern | Definition | Purpose |
+|---------|------------|---------|
+| RAMP | depth[x,y] = x + y | Simple monotonic gradient; easy to predict & scale. |
+| CONSTANT | depth[x,y] = constantValue | Baseline for verifying uniform scaling / filter neutrality. |
+| CHECKER | Alternating 2x2 blocks: (x/2 + y/2) parity -> high (2000) or low (500) | Creates sharp edges to later stress filters / compositor (edge preservation). |
+| STRIPES | Horizontal 4-pixel tall bands alternating 1800 / 600 | Directional structure (Y-axis) to test future anisotropic filters / blending. |
+| RADIAL | Concentric gradient center→edge (center≈2000 edge≈0) | Radial symmetry for testing isotropic smoothing & distance-based logic. |
+
+Checker rationale: using 2x2 block size avoids trivial alternation at every pixel (which can over-emphasize cache/memory effects) while still producing high‑contrast, spatially structured regions to test future smoothing, blending or compression logic. Values (2000 / 500) chosen to produce a clear scaled float delta without overflow.
 
 ### Risks / Notes
 - Keep SyntheticSensorDevice minimal (no color, no noise) to avoid accidental semantic coupling.
@@ -76,11 +87,14 @@ Purpose: Assert scaling factor semantics of ProcessingManager.
 ### Gaps
 - No test verifying scaled float values end-to-end.
 
-### Planned
-- Extend Phase 0 harness test or add `IntegrationPhase1.ScaleCorrectness`:
-  - Override scale (e.g., 0.01) vs default (e.g., 0.001) in two sub-tests.
-  - Raw pattern (RAMP) depth base values chosen so scaling easy to assert (e.g., depth = x+y)
-  - Compare each received float within epsilon (1e-6) of expected.
+### Planned / In Progress
+- Test file `integration/processing_scale_semantics.cpp` with two cases (scale 0.001 and 0.010) using harness `processing_scale` override.
+- RAMP pattern ensures expected[i] = (x+y)*scale.
+- Element-wise ASSERT_NEAR epsilon 1e-6.
+
+### Implementation Status
+- Harness supports `processing_scale` injection.
+- Scale semantics test passing under new suite name `ProcessingScaleSemantics`.
 
 ### Acceptance
 - All values pass epsilon check.

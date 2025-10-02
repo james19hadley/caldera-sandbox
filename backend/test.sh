@@ -64,6 +64,7 @@ USE_CTEST=0
 RUN_ALL_TESTS=0
 SPECIFIC_TESTS=()
 EXTRA_ARGS=()
+CATEGORIES=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -79,10 +80,13 @@ while [[ $# -gt 0 ]]; do
       RUN_ALL_TESTS=1; shift ;;
     --gtest_*)
       EXTRA_ARGS+=("$1"); shift ;;
-  LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|SensorRecording*|KinectV2_DeviceTest*|SharedMemoryRealisticFPS*|SharedMemoryStats*|*Stress*)
+    logger|pipeline|processing|shm|transport|sensor|integration|performance)
+      CATEGORIES+=("$1"); shift ;;
+    LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|SensorRecording*|KinectV2_DeviceTest*|SharedMemoryRealisticFPS*|SharedMemoryStats*|*Stress*)
       SPECIFIC_TESTS+=("$1"); shift ;;
     *)
-      EXTRA_ARGS+=("$1"); shift ;;
+      # Treat any remaining bare argument as a test suite/pattern (e.g. SyntheticSensorPipeline)
+      SPECIFIC_TESTS+=("$1"); shift ;;
   esac
 done
 
@@ -155,6 +159,46 @@ if [ ${#SPECIFIC_TESTS[@]} -gt 0 ]; then
   EXTRA_ARGS+=(--gtest_filter="$TEST_FILTER")
 fi
 
+if [ ${#CATEGORIES[@]} -gt 0 ]; then
+  CAT_PATTERNS=()
+  for c in "${CATEGORIES[@]}"; do
+    case $c in
+      logger) CAT_PATTERNS+=("Logger*" "LoggerConcurrency*" "LoggerRateLimit*");;
+      pipeline) CAT_PATTERNS+=("Pipeline*" "FrameId*" );;
+      processing) CAT_PATTERNS+=("Processing*" );;
+      shm) CAT_PATTERNS+=("SharedMemory*" "SharedMemoryNegative*" "SharedMemoryExtended*" "SharedMemoryLatency*" "SharedMemoryStats*" "SharedMemoryVerifiedMatrix*" "SharedMemoryRecovery*");;
+      transport) CAT_PATTERNS+=("Handshake*" "HandshakeStats*" "ClientHealth*");;
+      sensor) CAT_PATTERNS+=("KinectV2_DeviceTest*" "SensorRecordingTest*");;
+      integration) CAT_PATTERNS+=("SyntheticSensorPipeline*" "ProcessingScaleSemantics*");;
+      performance) RUN_HEAVY=1 ;; # heavy handled later
+    esac
+  done
+  if [ ${#CAT_PATTERNS[@]} -gt 0 ]; then
+    # Append category patterns to filter (if user also specified SPECIFIC_TESTS, combine)
+    CAT_JOIN=""
+    for p in "${CAT_PATTERNS[@]}"; do
+      if [ -z "$CAT_JOIN" ]; then CAT_JOIN="$p"; else CAT_JOIN="$CAT_JOIN:$p"; fi
+    done
+    # If a previous --gtest_filter exists, merge; else add new
+    FILTER_FOUND=0
+    for a in "${EXTRA_ARGS[@]}"; do
+      case $a in --gtest_filter=*) FILTER_FOUND=1;; esac
+    done
+    if [ $FILTER_FOUND -eq 1 ]; then
+      # Merge into existing filter argument
+      for i in "${!EXTRA_ARGS[@]}"; do
+        case ${EXTRA_ARGS[$i]} in
+          --gtest_filter=*)
+            EXISTING=${EXTRA_ARGS[$i]#--gtest_filter=}
+            EXTRA_ARGS[$i]=--gtest_filter="$EXISTING:$CAT_JOIN"
+            ;;
+        esac
+      done
+    else
+      EXTRA_ARGS+=(--gtest_filter="$CAT_JOIN")
+    fi
+  fi
+fi
 if [ $RUN_HEAVY -eq 1 ]; then
   # Switch to heavy binary
   echo -e "${YELLOW}Building heavy tests target...${RESET}" >&2
