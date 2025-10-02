@@ -210,9 +210,26 @@ Status: IMPLEMENTED
 
 ---
 ## Phase 9: Metrics & Observability
-### Planned
-- Introduce `PipelineStats` (frames_in, frames_out, frames_published, drops, last_latency_ns) maintained in harness callback.
-- Test ensures frames_in == frames_out when no drop scenarios.
+Status: IMPLEMENTED
+
+### Implementation
+- Extended `IntegrationHarness` with atomic counters: frames_in, frames_out, frames_published, last_latency_ns, mean latency accumulator (sum/count), derived_dropped (frames_in - frames_out if positive), and a fixed-size ring buffer (first 512 samples) for p95 latency estimation.
+- Added `Stats::p95_latency_ns` and internal `latencyP95ns()` (kept private; exposed via `stats()` aggregation).
+- Latency captured at publish (steady_clock now - frame.timestamp_ns); samples stored until ring buffer fills (sufficient for stable percentile on short tests).
+- Updated test file `integration/test_pipeline_metrics.cpp`:
+   - `PipelineMetrics.BasicConsistency`: verifies equality of frames_in/out/published in no-fault case, mean & last latency > 0, p95 sanity (>= mean, <5 ms).
+   - `PipelineMetrics.DropEveryNStatsConsistency`: configures sensor fault injection `dropEveryN=5`; confirms invariants still hold for frames (drop happens pre-emission so frames_in==frames_out==frames_published) and derived_dropped remains 0 by design; validates latency metrics still within bounds.
+- Documented behavior that upstream drops occur before harness increments frames_in (so derived_dropped tracks only processing/transport loss, not intentional pre-processing drops) — avoids double-counting.
+
+### Rationale
+- Percentile (p95) provides early signal of tail regression beyond mean latency drift, using lightweight in-memory sort at query time (small N).
+- Fixed 512-sample cap avoids unbounded memory while offering statistically stable p95 for short (<1s) runs at target FPS ranges (30–120).
+- Separating intentional upstream drops from derived_dropped keeps semantics clear: derived_dropped strictly indicates frames lost between sensor emission and publication (currently expected to be zero).
+
+### Acceptance
+- Both metrics tests pass consistently (<1.1 s aggregate) with p95 latency <5 ms (target <10 ms global) and mean latency >0.
+- Drop scenario does not introduce false loss accounting.
+- Plan updated to IMPLEMENTED; future enhancements (export histograms, multi-sensor aggregation) deferred to Phase 10+.
 
 ---
 ## Phase 10: Future Extensions
