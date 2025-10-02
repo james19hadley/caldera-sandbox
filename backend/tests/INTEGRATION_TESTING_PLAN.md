@@ -186,8 +186,27 @@ Status: IMPLEMENTED
 
 ---
 ## Phase 8: Protocol / Versioning Integration
-### Planned
-- Start harness; connect transport client mid-stream; confirm first received frame_id within last 1–2 published ids.
+Status: IMPLEMENTED
+
+### Implementation
+- Added `integration/test_transport_midstream_attach.cpp` containing:
+   - `ReaderSeesRecentFrame`: mid-stream attach yields near-tip frame id (slack few frames).
+   - `VersionMismatchRejected`: tampered header.version causes `open()` to fail.
+   - `ReaderReconnectMidStream`: close + reopen reader mid-stream; each attachment yields near-tip frame advancing over time.
+   - `MagicCorruptionRejected`: corrupted header.magic (0x0BADF00D) forces `open()` failure.
+   - `LiveVersionFlipGraceful`: after successful open, header version flipped to bogus; ensures no crash (behavior post-corruption treated as undefined but safe).
+
+### Rationale
+- Ensures defensive checks around magic/version protect against incompatible layouts.
+- Validates that late consumers immediately see current data (snapshot semantics) without lagging far behind producer.
+- Reconnect test simulates transient consumer restarts.
+
+### Future (Optional)
+- Formalize reader behavior after live corruption (currently best-effort).
+- Add health metrics around rejected opens for observability.
+
+### Acceptance
+- All Phase 8 tests pass consistently (<2s runtime aggregate).
 
 ---
 ## Phase 9: Metrics & Observability
