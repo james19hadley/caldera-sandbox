@@ -2,10 +2,10 @@
 #include "hal/KinectV1_Device.h"
 #include "common/Logger.h"
 
-// Minimal smoke test for Kinect v1 (libfreenect). This test is hardware-gated and will be skipped
-// if the build lacks Kinect v1 support or the device is not present.
+// Physical device open/close test for Kinect v1 (mirrors KinectV2_DeviceTest.PhysicalDeviceOpenClose naming).
+// Skips if hardware or build support absent. Set CALDERA_REQUIRE_KINECT_V1=1 to force failure instead of skip.
 
-TEST(KinectV1_DeviceTest, OpenCloseSmoke) {
+TEST(KinectV1_DeviceTest, PhysicalDeviceOpenClose) {
 #if !CALDERA_HAVE_KINECT_V1
     GTEST_SKIP() << "Built without Kinect v1 support (CALDERA_HAVE_KINECT_V1=0)";
 #else
