@@ -58,7 +58,9 @@ add_library(caldera_backend_core STATIC
     src/hal/KinectV1_Device.cpp
     src/hal/SensorRecorder.cpp
     src/hal/MockSensorDevice.cpp
+    src/hal/SyntheticSensorDevice.cpp
     src/processing/ProcessingManager.cpp
+    src/processing/IHeightMapFilter.h
     src/transport/LocalTransportServer.cpp
     src/transport/HandshakeServer.cpp
     src/transport/SharedMemoryTransportServer.cpp

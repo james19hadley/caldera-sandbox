@@ -45,6 +45,10 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
         maxV = std::max(maxV, v);
         sum += v;
     }
+    // Apply optional filter (currently likely NoOp)
+    if (height_filter_) {
+        height_filter_->apply(frame.heightMap.data, frame.heightMap.width, frame.heightMap.height);
+    }
     if (fusion_logger_ && fusion_logger_->should_log(spdlog::level::trace)) {
         fusion_logger_->trace("Frame {} depth->height converted N={} min={:.3f} max={:.3f} avg={:.3f}",
             frameCounter_, N, minV, maxV, N ? static_cast<float>(sum / N) : 0.0f);

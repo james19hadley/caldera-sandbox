@@ -24,6 +24,7 @@ add_executable(CalderaTests
     test_shm_verified_matrix.cpp
     test_transport_health.cpp
     test_transport_handshake_stats.cpp
+    test_integration_phase0_basic.cpp
     TestLocalTransportClient.cpp
     # test_kinect_data_viewer.cpp       # Disabled due to compilation issues
     # test_kinect_data_validation.cpp   # Disabled due to compilation issues

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "common/DataTypes.h"
+#include "processing/IHeightMapFilter.h"
 
 namespace spdlog { class logger; }
 
@@ -25,12 +26,16 @@ public:
 
     void processRawDepthFrame(const RawDepthFrame& raw);
 
+    // Inject a height map filter (ownership shared to allow reuse in tests). If not set, no-op.
+    void setHeightMapFilter(std::shared_ptr<IHeightMapFilter> f) { height_filter_ = std::move(f); }
+
 private:
     std::shared_ptr<spdlog::logger> orch_logger_;
     std::shared_ptr<spdlog::logger> fusion_logger_;
     WorldFrameCallback callback_;
     uint64_t frameCounter_ = 0;
     float scale_ = 0.001f;
+    std::shared_ptr<IHeightMapFilter> height_filter_{}; // optional
 };
 
 } // namespace caldera::backend::processing
