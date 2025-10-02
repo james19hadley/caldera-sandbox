@@ -15,6 +15,10 @@
 
 #include "transport/IWorldFrameClient.h"
 #include "transport/SharedMemoryWorldFrameClient.h"
+// Socket client (optional)
+#if CALDERA_TRANSPORT_SOCKETS
+#include "transport/SocketWorldFrameClient.h"
+#endif
 
 namespace spdlog { class logger; }
 
@@ -32,6 +36,11 @@ public:
         std::string shm_name;
         uint32_t max_width = 640;
         uint32_t max_height = 480;
+        bool verify_checksum = true;
+        int connect_timeout_ms = 2000;
+    };
+    struct SocketDataConfig {
+        std::string endpoint = "unix:/tmp/caldera_worldframe.sock";
         bool verify_checksum = true;
         int connect_timeout_ms = 2000;
     };
@@ -61,6 +70,7 @@ public:
 
     // Data-plane (Shared Memory). Returns true if opened within timeout.
     bool connectData(const ShmDataConfig& cfg);
+    bool connectData(const SocketDataConfig& cfg);
     void disconnectData();
     std::optional<FrameView> latest(); // polls latest; updates stats lazily
 

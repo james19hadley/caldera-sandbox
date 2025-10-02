@@ -11,6 +11,9 @@
 using namespace std::chrono_literals;
 using caldera::backend::transport::SharedMemoryWorldFrameClient;
 using caldera::backend::transport::IWorldFrameClient;
+#if CALDERA_TRANSPORT_SOCKETS
+using caldera::backend::transport::SocketWorldFrameClient;
+#endif
 
 namespace {
 static void logErr(std::shared_ptr<spdlog::logger> lg, const char* what, int err){ if(lg) lg->error("Client {} error: {}", what, strerror(err)); }
@@ -80,6 +83,23 @@ bool TestCalderaClient::connectData(const ShmDataConfig& cfg) {
         connect_time_ns_ = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     }
     return data_connected_;
+}
+
+bool TestCalderaClient::connectData(const SocketDataConfig& cfg) {
+#if CALDERA_TRANSPORT_SOCKETS
+    disconnectData(); verify_checksum_ = cfg.verify_checksum; latencies_ns_.clear(); stats_ = {}; last_seen_frame_id_ = std::numeric_limits<uint64_t>::max();
+    auto logger = log_;
+    auto implCfg = SocketWorldFrameClient::Config{cfg.endpoint};
+    data_client_ = std::make_unique<SocketWorldFrameClient>(logger, implCfg);
+    data_connected_ = data_client_->connect(cfg.connect_timeout_ms);
+    if (!data_connected_) { data_client_.reset(); }
+    else { connect_time_ns_ = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+    return data_connected_;
+#else
+    (void)cfg;
+    if (log_) log_->warn("Socket transport disabled at build time (CALDERA_TRANSPORT_SOCKETS=OFF)");
+    return false;
+#endif
 }
 
 void TestCalderaClient::disconnectData() { closeData(); }

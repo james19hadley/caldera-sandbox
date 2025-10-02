@@ -125,7 +125,16 @@ fi
 # 2. Configure the project using CMake.
 echo "--- Configuring project ---"
 
-cmake -B $BUILD_DIR -S . -DCALDERA_BUILD_TESTS=ON -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
+# Forward optional feature flags to CMake
+EXTRA_CMAKE_FLAGS=()
+if [ "${CALDERA_TRANSPORT_SOCKETS:-0}" = "1" ] || [ "${CALDERA_TRANSPORT_SOCKETS:-OFF}" = "ON" ]; then
+	echo "[build.sh] Enabling socket transport (CALDERA_TRANSPORT_SOCKETS=ON)"
+	EXTRA_CMAKE_FLAGS+=( -DCALDERA_TRANSPORT_SOCKETS=ON )
+else
+	EXTRA_CMAKE_FLAGS+=( -DCALDERA_TRANSPORT_SOCKETS=OFF )
+fi
+
+cmake -B $BUILD_DIR -S . -DCALDERA_BUILD_TESTS=ON -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake "${EXTRA_CMAKE_FLAGS[@]}"
 
 # 3. Build the project (using all CPU cores)
 if [ ${#TARGETS[@]} -eq 0 ]; then

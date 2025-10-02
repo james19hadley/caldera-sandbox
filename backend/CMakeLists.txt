@@ -14,6 +14,13 @@ find_package(JPEG REQUIRED)
 pkg_check_modules(VAAPI libva libva-drm)
 find_package(libjpeg-turbo CONFIG REQUIRED)
 
+option(CALDERA_TRANSPORT_SOCKETS "Enable socket transport (Unix domain sockets) support" OFF)
+if (CALDERA_TRANSPORT_SOCKETS)
+    message(STATUS "Socket transport: ENABLED")
+else()
+    message(STATUS "Socket transport: DISABLED (CALDERA_TRANSPORT_SOCKETS=OFF)")
+endif()
+
 option(CALDERA_WITH_KINECT_V1 "Enable Kinect v1 (libfreenect) support" ON)
 if (CALDERA_WITH_KINECT_V1)
     message(STATUS "Kinect v1 support: ENABLED")
@@ -67,9 +74,16 @@ add_library(caldera_backend_core STATIC
     src/transport/SharedMemoryReader.cpp
     src/transport/SharedMemoryWorldFrameClient.cpp
     src/transport/FifoManager.cpp
-    src/transport/SocketTransportServer.cpp
     src/AppManager.cpp
 )
+
+# Socket transport sources (optional)
+if (CALDERA_TRANSPORT_SOCKETS)
+    target_sources(caldera_backend_core PRIVATE
+        src/transport/SocketTransportServer.cpp
+        src/transport/SocketWorldFrameClient.cpp
+    )
+endif()
 
 target_include_directories(caldera_backend_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -97,6 +111,13 @@ if (HAVE_FREENECT_V1)
 endif()
 target_compile_definitions(caldera_backend_core PUBLIC SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
 
+# Propagate CALDERA_TRANSPORT_SOCKETS to dependents
+if (CALDERA_TRANSPORT_SOCKETS)
+    target_compile_definitions(caldera_backend_core PUBLIC CALDERA_TRANSPORT_SOCKETS=1)
+else()
+    target_compile_definitions(caldera_backend_core PUBLIC CALDERA_TRANSPORT_SOCKETS=0)
+endif()
+
 add_executable(SensorBackend
     src/main.cpp
 )
@@ -104,6 +125,13 @@ add_executable(SensorBackend
 target_include_directories(SensorBackend PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 target_link_libraries(SensorBackend PRIVATE caldera_backend_core)
+
+# Ensure SensorBackend also sees the sockets flag
+if (CALDERA_TRANSPORT_SOCKETS)
+    target_compile_definitions(SensorBackend PRIVATE CALDERA_TRANSPORT_SOCKETS=1)
+else()
+    target_compile_definitions(SensorBackend PRIVATE CALDERA_TRANSPORT_SOCKETS=0)
+endif()
 
 # Kinect Data Viewer Tool
 add_executable(KinectViewer

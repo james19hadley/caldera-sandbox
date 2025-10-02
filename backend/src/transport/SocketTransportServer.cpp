@@ -55,6 +55,9 @@ void SocketTransportServer::acceptLoop() {
             sockaddr_un caddr{}; socklen_t clen = sizeof(caddr);
             int fd = ::accept(listen_fd_, reinterpret_cast<sockaddr*>(&caddr), &clen);
             if (fd >= 0) {
+                // set client socket non-blocking to avoid potential blocking send during shutdown
+                int cflags = fcntl(fd, F_GETFL, 0);
+                (void)fcntl(fd, F_SETFL, cflags | O_NONBLOCK);
                 client_fd_ = fd;
                 if (logger_) logger_->info("SocketTransportServer accepted client fd={}", client_fd_);
             } else {
@@ -83,6 +86,9 @@ void SocketTransportServer::closeClient() {
 void SocketTransportServer::stop() {
     if (!running_) return;
     running_ = false;
+    // Proactively shutdown sockets to wake any blocking syscalls
+    if (client_fd_ >= 0) { ::shutdown(client_fd_, SHUT_RDWR); }
+    if (listen_fd_ >= 0) { ::shutdown(listen_fd_, SHUT_RDWR); }
     if (accept_thread_.joinable()) accept_thread_.join();
     closeClient();
     if (listen_fd_ >= 0) { ::close(listen_fd_); listen_fd_ = -1; }

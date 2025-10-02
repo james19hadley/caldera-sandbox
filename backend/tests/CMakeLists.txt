@@ -52,6 +52,11 @@ add_executable(CalderaTests
     # sensor/test_kinect_data_validation.cpp
 )
 
+# Optional socket parity test
+if (CALDERA_TRANSPORT_SOCKETS)
+    target_sources(CalderaTests PRIVATE integration/test_transport_socket_parity.cpp)
+endif()
+
 # Heavy / performance / stress tests
 add_executable(CalderaHeavyTests
     test_main.cpp

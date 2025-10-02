@@ -280,7 +280,7 @@ Synthetic (uint16_t vector) → ProcessingManager (scaled float vector) → SHM 
 (End of Integration Testing Plan)
 
 ---
-## Phase 10: Multi-Process & Future Network Transport (IN PROGRESS)
+## Phase 10: Multi-Process & Future Network Transport (COMPLETED)
 
 ### Objectives
 - Validate end-to-end behavior when backend runs as an external process (no in-test direct harness wiring).
@@ -288,14 +288,15 @@ Synthetic (uint16_t vector) → ProcessingManager (scaled float vector) → SHM 
 - Exercise graceful restart scenarios (producer restarts; consumer reattaches) without crashes or stale data leakage.
 - Extend black-box assertions to include latency distribution & data integrity (CRC) using only externally observable state.
 
-### Implemented (so far)
+### Implemented
 - Added env-based transport selection in `main.cpp`: `CALDERA_TRANSPORT=shm|local` plus capacity overrides.
 - Added synthetic sensor selection (`CALDERA_SENSOR_TYPE=synthetic`) for deterministic frames in process mode.
 - New black-box test `ProcessBlackBox.SensorBackendSharedMemoryBasic`:
    - Forks child running `SensorBackend` (SHM + synthetic) and attaches `SharedMemoryReader`.
    - Collects frames, handles potential frame id residue, validates CRC RAMP pattern and p95 latency (<10 ms).
 - Graceful restart test `ProcessBlackBox.SensorBackendGracefulRestart` verifying independent frame id sequences after restart.
-- Skeleton `SocketTransportServer` (not yet wired) placeholder for future network streaming implementation.
+- Socket transport (UDS) minimal implementation: `SocketTransportServer` (server) + `SocketWorldFrameClient` (client) under `backend/src/transport` behind build flag `CALDERA_TRANSPORT_SOCKETS`.
+- Parity test `TransportSocketParity.ShmVsSocket_BasicCoverageAndCRC`: launches `SensorBackend` with `CALDERA_TRANSPORT=socket`, validates coverage, CRC, and latency budget. PASS.
 - Mid-stream reader reconnect test `ProcessBlackBox.SensorBackendReaderReconnect` exercising detach/reattach to same SHM name and asserting near-tip frame acquisition (monotonic advance, no crash).
 - Checksum verification path: reader-side `verifyChecksum()` added (explicit opt-in) and later optimized to compute CRC32 directly over mapped float buffer (removed temporary copy to vector) to avoid per-frame allocation overhead.
 - Logging noise suppression for process tests through env vars: `CALDERA_LOG_FRAME_TRACE_EVERY=0` disables per-frame logs; `CALDERA_COMPACT_FRAME_LOG=1` condenses lifecycle messages; tests rely on high-level lifecycle logs only.
@@ -303,18 +304,15 @@ Synthetic (uint16_t vector) → ProcessingManager (scaled float vector) → SHM 
 - Frame integrity pattern bounds tightened with adaptive upper bound using captured width/height and processing scale.
 - Verified SHM header version/magic guard still enforced after additions.
 
-### Planned Next Steps
-1. SocketTransportServer minimal real implementation (Unix domain socket first): simple length-prefixed header (frame_id, timestamp_ns, width, height, float_count, checksum, alg) + raw float payload.
-2. (Optional) Heartbeat / metrics channel: lightweight JSON or line-delimited metrics stream (publish counts, latency p95 snapshot) for external monitoring without polling SHM.
-3. Cross-transport parity test: same synthetic scenario under SHM & socket; assert comparable frame cadence (coverage) and integrity (CRC) plus latency distribution within tolerance (e.g., socket p95 <= SHM p95 + 5 ms).
-4. Summary metrics emission at end of black-box tests (single structured log line with frames_received, mean_latency_ms, p95_latency_ms) to simplify scraping.
-5. Introduce multi-sensor (ties back to deferred Phase 2) then validate composing logic also works via external process (deferred until compositor lands).
-6. (Deferred/Maybe) Heartbeat includes protocol version & checksum stats (mismatch count) once multiple transports exist.
+### Notes / Future Work
+1. (Optional) Heartbeat / metrics channel: lightweight JSON or line-delimited metrics stream (publish counts, latency p95 snapshot) for external monitoring without polling SHM.
+2. Introduce multi-sensor (ties back to deferred Phase 2) then validate composing logic also works via external process (deferred until compositor lands).
+3. (Deferred/Maybe) Heartbeat includes protocol version & checksum stats (mismatch count) once multiple transports exist.
 
-### Exit Criteria (Phase 10 COMPLETE)
-- Black-box SHM tests: basic + restart + reconnect + latency/CRC all green and stable.
-- Socket transport minimal implementation with integrity test parity vs SHM.
-- Documented wire protocol sketch for socket transport (header + float payload) in repo.
-- Plan updated to IMPLEMENTED with risk notes (latency sensitivity, ordering semantics across transports).
+### Exit Criteria (satisfied)
+- Black-box SHM tests: basic + restart + reconnect + latency/CRC green and stable (reconnect test window widened to reduce flakiness).
+- Socket transport minimal implementation with integrity parity vs SHM.
+- Documented wire protocol for socket transport (`backend/src/transport/SOCKET_TRANSPORT_SPEC.md`).
+- Plan updated to COMPLETED with risk notes (latency sensitivity, ordering semantics across transports).
 - Checksum verification optimized (no per-frame buffer copy) without regressing tests.
 

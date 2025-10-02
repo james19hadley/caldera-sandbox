@@ -10,7 +10,9 @@
 #include "processing/ProcessingManager.h"
 #include "transport/LocalTransportServer.h"
 #include "transport/SharedMemoryTransportServer.h"
+#if CALDERA_TRANSPORT_SOCKETS
 #include "transport/SocketTransportServer.h"
+#endif
 
 #include <exception>
 #include <thread>
@@ -91,11 +93,16 @@ int main() {
 			transport = std::make_shared<transport::SharedMemoryTransportServer>(transportLog, cfg);
 			transportLog->info("Using SharedMemoryTransportServer name={} size={}x{} checksum_interval_ms={}", cfg.shm_name, cfg.max_width, cfg.max_height, cfg.checksum_interval_ms);
 		} else if (transportType == "socket") {
+#if CALDERA_TRANSPORT_SOCKETS
 			transport::SocketTransportServer::Config cfg;
 			if (const char* ep = std::getenv("CALDERA_SOCKET_ENDPOINT")) cfg.endpoint = ep;
 			if (const char* ci = std::getenv("CALDERA_SOCKET_CHECKSUM_INTERVAL_MS")) cfg.checksum_interval_ms = static_cast<uint32_t>(std::atoi(ci));
 			transport = std::make_shared<transport::SocketTransportServer>(transportLog, cfg);
 			transportLog->info("Using SocketTransportServer endpoint={} checksum_interval_ms={}", cfg.endpoint, cfg.checksum_interval_ms);
+#else
+			transportLog->error("Socket transport requested but disabled at build time (CALDERA_TRANSPORT_SOCKETS=OFF). Falling back to LocalTransportServer.");
+			transport = std::make_shared<transport::LocalTransportServer>(transportLog, handshakeLog);
+#endif
 		} else {
 			transport = std::make_shared<transport::LocalTransportServer>(transportLog, handshakeLog);
 			transportLog->info("Using LocalTransportServer (in-proc FIFO)");

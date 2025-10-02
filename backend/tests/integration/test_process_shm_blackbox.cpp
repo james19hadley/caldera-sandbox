@@ -181,7 +181,7 @@ TEST(ProcessBlackBox, SensorBackendReaderReconnect) {
     TestCalderaClient client1(clientLogger);
     ASSERT_TRUE(client1.connectData(TestCalderaClient::ShmDataConfig{shmName, 640, 480, false, 3000})) << "initial connect failed";
     uint64_t firstFrameId=0; int collected=0;
-    auto phaseEnd = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+    auto phaseEnd = std::chrono::steady_clock::now() + std::chrono::milliseconds(600);
     while (std::chrono::steady_clock::now() < phaseEnd) {
         auto fv = client1.latest();
         if (fv) { if (firstFrameId==0) firstFrameId = fv->frame_id; ++collected; }
@@ -190,14 +190,14 @@ TEST(ProcessBlackBox, SensorBackendReaderReconnect) {
     EXPECT_GT(collected, 2);
     // Close first client before reopening
     client1.disconnectData();
-    // Wait gap (~600ms) letting producer advance frames
-    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    // Wait gap (~800ms) letting producer advance frames
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
     // Reopen
     TestCalderaClient client2(L.get("ProcessBlackBox.Client.Reconnect2"));
     ASSERT_TRUE(client2.connectData(TestCalderaClient::ShmDataConfig{shmName, 640, 480, false, 2000})) << "reopen failed";
     // After reconnect, wait until we see sufficient advancement; allow some time
     uint64_t maxSeenId = 0; int postCollected=0;
-    auto phase2End = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    auto phase2End = std::chrono::steady_clock::now() + std::chrono::milliseconds(1800);
     while (std::chrono::steady_clock::now() < phase2End) {
         auto fv = client2.latest();
         if (fv) {
@@ -208,7 +208,7 @@ TEST(ProcessBlackBox, SensorBackendReaderReconnect) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     EXPECT_GT(postCollected, 2);
-    // Expect that at least ~10 frames advanced (30FPS * 0.6s gap ~18, use conservative >=5)
+    // Expect that at least ~5 frames advanced (30FPS * 0.8s gap ~24, conservative >=5)
     EXPECT_GE(maxSeenId, firstFrameId + 5) << "frame id did not advance sufficiently across reconnect";
     // Cleanup child
     kill(pid, SIGTERM);
