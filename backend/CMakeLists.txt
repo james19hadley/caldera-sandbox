@@ -52,6 +52,7 @@ endif()
 # --- Project Sources ---
 add_library(caldera_backend_core STATIC
     src/common/Logger.cpp
+    src/common/Checksum.cpp
     src/hal/KinectV2_Device.cpp
     # KinectV1 source always compiled (file has internal stubs if libfreenect headers absent)
     src/hal/KinectV1_Device.cpp
@@ -59,6 +60,7 @@ add_library(caldera_backend_core STATIC
     src/hal/MockSensorDevice.cpp
     src/processing/ProcessingManager.cpp
     src/transport/LocalTransportServer.cpp
+    src/transport/HandshakeServer.cpp
     src/transport/SharedMemoryTransportServer.cpp
     src/transport/SharedMemoryReader.cpp
     src/transport/FifoManager.cpp

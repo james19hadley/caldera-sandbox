@@ -19,6 +19,7 @@ struct WorldFrame {
 	uint64_t timestamp_ns = 0; // monotonic production timestamp
 	uint64_t frame_id = 0; // monotonically increasing sequence id (assigned by processing stage)
 	StabilizedHeightMap heightMap; // only terrain for now
+	uint32_t checksum = 0; // simple CRC32 or similar over heightMap.data bytes (future extensibility)
 	// (No objects, events, metadata yet – added in later steps)
 };
 

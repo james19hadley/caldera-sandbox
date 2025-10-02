@@ -6,13 +6,20 @@
 #include <unistd.h>
 #include <cstring>
 #include <cerrno>
+#include <chrono>
 #include "common/Logger.h"
 #include <memory>
+#include "common/Checksum.h"
+#include "SharedMemoryLayout.h"
 
 namespace caldera::backend::transport {
 
 SharedMemoryTransportServer::SharedMemoryTransportServer(std::shared_ptr<spdlog::logger> logger, Config cfg)
-    : logger_(std::move(logger)), cfg_(std::move(cfg)) {}
+    : logger_(std::move(logger)), cfg_(std::move(cfg)) {
+    // Enforce hard upper bound so runaway config doesn't allocate huge SHM unintentionally.
+    if (cfg_.max_width > kHardMaxWidth)  cfg_.max_width  = kHardMaxWidth;
+    if (cfg_.max_height > kHardMaxHeight) cfg_.max_height = kHardMaxHeight;
+}
 
 SharedMemoryTransportServer::~SharedMemoryTransportServer() { stop(); }
 
@@ -62,18 +69,22 @@ bool SharedMemoryTransportServer::ensureMapped() {
     hdr->magic = 0x43414C44;
     hdr->version = 2;
     hdr->active_index = 0;
-    hdr->buffers[0] = BufferMeta{}; hdr->buffers[1] = BufferMeta{};
+    hdr->checksum_algorithm = 1; // CRC32
+    hdr->buffers[0] = BufferMeta{0,0,0,0,0,0,0};
+    hdr->buffers[1] = BufferMeta{0,0,0,0,0,0,0};
     return true;
 }
 
 void SharedMemoryTransportServer::sendWorldFrame(const caldera::backend::common::WorldFrame& frame) {
     if (!running_) return;
     if (!mapping_.get() && !ensureMapped()) return;
+    stats_.frames_attempted++;
     const auto& hm = frame.heightMap;
     if (hm.width > static_cast<int>(cfg_.max_width) || hm.height > static_cast<int>(cfg_.max_height)) {
         // Rate limited via central Logger singleton (once per 2s)
         caldera::backend::common::Logger::instance().warnRateLimited(logger_->name(), "shm_drop", std::chrono::milliseconds(2000),
             fmt::format("Frame dimensions exceed shm capacity {}x{} vs {}x{} -> dropping", hm.width, hm.height, cfg_.max_width, cfg_.max_height));
+        ++stats_.frames_dropped_capacity;
         return;
     }
     auto* hdr = reinterpret_cast<ShmHeader*>(mapping_.get());
@@ -85,6 +96,22 @@ void SharedMemoryTransportServer::sendWorldFrame(const caldera::backend::common:
     meta.width = static_cast<uint32_t>(hm.width);
     meta.height = static_cast<uint32_t>(hm.height);
     meta.float_count = static_cast<uint32_t>(hm.data.size());
+    uint32_t cs = frame.checksum;
+    bool need_auto = (cs == 0);
+    if (cfg_.checksum_interval_ms > 0 && need_auto && !hm.data.empty()) {
+        uint64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        uint64_t interval_ns = static_cast<uint64_t>(cfg_.checksum_interval_ms) * 1'000'000ULL;
+        if (last_checksum_compute_ns_ == 0 || now_ns - last_checksum_compute_ns_ >= interval_ns) {
+            cs = caldera::backend::common::crc32(hm.data);
+            last_checksum_compute_ns_ = now_ns;
+        } else {
+            cs = 0; // leave zero (interpreted as 'not computed')
+        }
+    } else if (need_auto && cfg_.checksum_interval_ms == 0) {
+        // checksums disabled -> leave zero
+        cs = 0;
+    }
+    meta.checksum = cs;
     // compute buffer base
     char* base = reinterpret_cast<char*>(mapping_.get()) + sizeof(ShmHeader) + write_index * single_buffer_bytes_;
     std::memcpy(base, hm.data.data(), hm.data.size() * sizeof(float));
@@ -92,6 +119,20 @@ void SharedMemoryTransportServer::sendWorldFrame(const caldera::backend::common:
     meta.ready = 1; // publish data
     __sync_synchronize();
     hdr->active_index = write_index; // atomicity coarse; barrier ensures prior writes visible
+
+    // Stats update
+    stats_.frames_published++;
+    stats_.bytes_written += hm.data.size() * sizeof(float);
+    // FPS estimate using simple EWMA over intervals (alpha=0.2)
+    uint64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (last_publish_ts_ns_ != 0) {
+        double dt = (now_ns - last_publish_ts_ns_) / 1e9;
+        if (dt > 0) {
+            double inst = 1.0 / dt;
+            stats_.last_publish_fps = stats_.last_publish_fps == 0.0 ? inst : (stats_.last_publish_fps * 0.8 + inst * 0.2);
+        }
+    }
+    last_publish_ts_ns_ = now_ns;
     if (logger_->should_log(spdlog::level::debug)) {
         logger_->debug("SHM wrote frame id={} idx={} size={}x{} floats={} active={}", meta.frame_id, write_index, meta.width, meta.height, meta.float_count, hdr->active_index);
     }

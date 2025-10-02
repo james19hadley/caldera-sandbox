@@ -38,7 +38,9 @@ std::optional<SharedMemoryReader::FrameView> SharedMemoryReader::latest() {
     BufferMeta meta = hdr->buffers[idx];
     if (meta.ready != 1) return std::nullopt;
     char* base = reinterpret_cast<char*>(mapped_) + sizeof(ShmHeader) + idx * single_buffer_bytes_;
-    FrameView fv{ meta.frame_id, meta.timestamp_ns, meta.width, meta.height, reinterpret_cast<const float*>(base), meta.float_count };
+    FrameView fv{ meta.frame_id, meta.timestamp_ns, meta.width, meta.height,
+                  reinterpret_cast<const float*>(base), meta.float_count, meta.checksum,
+                  hdr->checksum_algorithm };
     return fv;
 }
 

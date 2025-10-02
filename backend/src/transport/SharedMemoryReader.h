@@ -1,3 +1,4 @@
+#include "SharedMemoryLayout.h"
 #ifndef CALDERA_BACKEND_TRANSPORT_SHARED_MEMORY_READER_H
 #define CALDERA_BACKEND_TRANSPORT_SHARED_MEMORY_READER_H
 
@@ -21,6 +22,8 @@ public:
         uint32_t height = 0;
         const float* data = nullptr; // points into mapped memory (invalidated after reader destruction)
         uint32_t float_count = 0;
+        uint32_t checksum = 0;
+        uint32_t checksum_algorithm = 0;
     };
 
     explicit SharedMemoryReader(std::shared_ptr<spdlog::logger> logger): logger_(std::move(logger)) {}
@@ -33,21 +36,8 @@ public:
     std::optional<FrameView> latest();
 
 private:
-    struct BufferMeta { // mirror writer
-        uint64_t frame_id;
-        uint64_t timestamp_ns;
-        uint32_t width;
-        uint32_t height;
-        uint32_t float_count;
-        uint32_t ready;
-    };
-    struct ShmHeader {
-        uint32_t magic;
-        uint32_t version;
-        uint32_t active_index;
-        uint32_t reserved;
-        BufferMeta buffers[2];
-    };
+    using BufferMeta = caldera::backend::transport::shm::BufferMeta;
+    using ShmHeader  = caldera::backend::transport::shm::ShmHeader;
 
     std::shared_ptr<spdlog::logger> logger_;
     int fd_ = -1;

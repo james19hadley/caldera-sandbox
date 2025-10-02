@@ -12,7 +12,7 @@
 #   ./build.sh KinectViewer       # Build specific target
 #   ./build.sh -i SensorBackend CalderaTests  # Incremental build specific targets
 #
-# Available targets: SensorBackend, KinectViewer, CalderaTests
+# Available targets: SensorBackend, KinectViewer, CalderaTests, CalderaHeavyTests
 #
 # Run tests:
 #   ./test.sh
@@ -72,7 +72,8 @@ while [[ $# -gt 0 ]]; do
 			echo "  SensorBackend       Main application"
 			echo "  KinectViewer        Kinect data viewer utility"
 
-			echo "  CalderaTests        Test suite"
+			echo "  CalderaTests        Test suite (regular)"
+			echo "  CalderaHeavyTests   Heavy/stress & benchmark tests"
 			echo ""
 			echo "Examples:"
 			echo "  $0                           # Build all targets (clean)"
@@ -80,11 +81,11 @@ while [[ $# -gt 0 ]]; do
 			echo "  $0 KinectViewer              # Build only KinectViewer (clean)"
 			echo "  $0 -i SensorBackend CalderaTests  # Build specific targets (incremental)"
 			exit 0 ;;
-		SensorBackend|KinectViewer|CalderaTests)
+		SensorBackend|KinectViewer|CalderaTests|CalderaHeavyTests)
 			TARGETS+=("$1"); shift ;;
 		*) 
 			echo "Error: Unknown option or target: $1"
-			echo "Available targets: SensorBackend, KinectViewer, CalderaTests"
+			echo "Available targets: SensorBackend, KinectViewer, CalderaTests, CalderaHeavyTests"
 			echo "Use -h for help"
 			exit 1 ;;
 	esac

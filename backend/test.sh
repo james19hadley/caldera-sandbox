@@ -18,7 +18,8 @@
 #
 # Available test suites: LoggerBasic, LoggerLevelsFixture, PipelineBasic, 
 #                       ProcessingConversion, LoggerConcurrency, FrameId, SharedMemory,
-#                       SensorRecording, KinectV2_DeviceTest
+#                       SensorRecording, KinectV2_DeviceTest, SharedMemoryRealisticFPS,
+#                       SharedMemoryStats
 
 set -euo pipefail
 
@@ -78,7 +79,7 @@ while [[ $# -gt 0 ]]; do
       RUN_ALL_TESTS=1; shift ;;
     --gtest_*)
       EXTRA_ARGS+=("$1"); shift ;;
-    LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|SensorRecording*|KinectV2_DeviceTest*|*Stress*)
+  LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|SensorRecording*|KinectV2_DeviceTest*|SharedMemoryRealisticFPS*|SharedMemoryStats*|*Stress*)
       SPECIFIC_TESTS+=("$1"); shift ;;
     *)
       EXTRA_ARGS+=("$1"); shift ;;
