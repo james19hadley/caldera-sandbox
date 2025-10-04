@@ -26,8 +26,9 @@
 #                       SensorRecording, KinectV2_DeviceTest, SharedMemoryRealisticFPS,
 #                       SharedMemoryStats, MemoryLeakTest
 #
-# Available test categories: logger, pipeline, processing, shm, transport, sensor, 
+# Available test categories (auto-discovered): logger, pipeline, processing, shm, transport, sensor, 
 #                          integration, memory, performance
+#                          Use --list to see which tests belong to each category
 #
 # Long-running memory tests (5+ minutes each) are skipped by default.
 # To enable them: export CALDERA_ENABLE_LONG_MEMORY_TESTS=1
@@ -160,6 +161,20 @@ fi
 if [ $LIST_TESTS -eq 1 ]; then
   echo -e "${GREEN}Available tests:${RESET}"
   "$TEST_BIN" --gtest_list_tests 2>/dev/null
+  
+  echo -e "\n${GREEN}Available categories (auto-discovered):${RESET}"
+  AVAILABLE_TESTS=$("$TEST_BIN" --gtest_list_tests 2>/dev/null | grep -E '^\S+\.$' | tr -d '.')
+  
+  echo "  logger     - $(echo "$AVAILABLE_TESTS" | grep -c "^Logger") tests: $(echo "$AVAILABLE_TESTS" | grep "^Logger" | tr '\n' ' ')"
+  echo "  pipeline   - $(echo "$AVAILABLE_TESTS" | grep -c -E "^(Pipeline|FrameId)") tests: $(echo "$AVAILABLE_TESTS" | grep -E "^(Pipeline|FrameId)" | tr '\n' ' ')"
+  echo "  processing - $(echo "$AVAILABLE_TESTS" | grep -c -E "^(Processing|FastGaussian)") tests: $(echo "$AVAILABLE_TESTS" | grep -E "^(Processing|FastGaussian)" | tr '\n' ' ')"
+  echo "  shm        - $(echo "$AVAILABLE_TESTS" | grep -c "^SharedMemory") tests: $(echo "$AVAILABLE_TESTS" | grep "^SharedMemory" | tr '\n' ' ')"
+  echo "  transport  - $(echo "$AVAILABLE_TESTS" | grep -c -E "^(Handshake|ClientHealth|Transport)") tests: $(echo "$AVAILABLE_TESTS" | grep -E "^(Handshake|ClientHealth|Transport)" | tr '\n' ' ')"
+  echo "  sensor     - $(echo "$AVAILABLE_TESTS" | grep -c -E "(Sensor|Kinect)") tests: $(echo "$AVAILABLE_TESTS" | grep -E "(Sensor|Kinect)" | tr '\n' ' ')"
+  echo "  integration- $(echo "$AVAILABLE_TESTS" | grep -c -E "^(SyntheticSensorPipeline|ProcessingScaleSemantics|ProcessBlackBox|FaultInjection|TransportMidStreamAttach)") tests: $(echo "$AVAILABLE_TESTS" | grep -E "^(SyntheticSensorPipeline|ProcessingScaleSemantics|ProcessBlackBox|FaultInjection|TransportMidStreamAttach)" | tr '\n' ' ')"
+  echo "  memory     - $(echo "$AVAILABLE_TESTS" | grep -c "Memory") tests: $(echo "$AVAILABLE_TESTS" | grep "Memory" | tr '\n' ' ')"
+  echo "  performance- Heavy tests (requires --heavy flag)"
+  
   exit 0
 fi
 
@@ -167,7 +182,7 @@ fi
 if [ $MEMORY_QUICK -eq 1 ]; then
   echo -e "${GREEN}Running quick memory tests (no ExtendedRuntime)...${RESET}"
   CATEGORIES=("memory")
-  EXCLUDE_PATTERNS=("ExtendedRuntimeMemoryTest*")
+  EXCLUDE_PATTERNS=("*ExtendedRuntime*")
 fi
 
 if [ $MEMORY_ASAN -eq 1 ]; then
@@ -181,7 +196,7 @@ if [ $MEMORY_ASAN -eq 1 ]; then
     TEST_BIN="${BUILD_DIR}/CalderaTests"
   fi
   CATEGORIES=("memory")
-  EXCLUDE_PATTERNS=("ExtendedRuntimeMemoryTest*")  # Skip long tests by default
+  EXCLUDE_PATTERNS=("*ExtendedRuntime*")  # Skip long tests by default
 fi
 
 if [ $MEMORY_FULL -eq 1 ]; then
@@ -229,18 +244,82 @@ if [ ${#SPECIFIC_TESTS[@]} -gt 0 ]; then
 fi
 
 if [ ${#CATEGORIES[@]} -gt 0 ]; then
+  # Auto-discover tests and build category patterns dynamically
+  AVAILABLE_TESTS=$("$TEST_BIN" --gtest_list_tests 2>/dev/null | grep -E '^\S+\.$' | tr -d '.')
+  
   CAT_PATTERNS=()
   for c in "${CATEGORIES[@]}"; do
     case $c in
-      logger) CAT_PATTERNS+=("Logger*" "LoggerConcurrency*" "LoggerRateLimit*");;
-      pipeline) CAT_PATTERNS+=("Pipeline*" "FrameId*" );;
-      processing) CAT_PATTERNS+=("Processing*" );;
-      shm) CAT_PATTERNS+=("SharedMemory*" "SharedMemoryNegative*" "SharedMemoryExtended*" "SharedMemoryLatency*" "SharedMemoryStats*" "SharedMemoryVerifiedMatrix*" "SharedMemoryRecovery*");;
-      transport) CAT_PATTERNS+=("Handshake*" "HandshakeStats*" "ClientHealth*");;
-      sensor) CAT_PATTERNS+=("KinectV2_DeviceTest*" "SensorRecordingTest*");;
-      integration) CAT_PATTERNS+=("SyntheticSensorPipeline*" "ProcessingScaleSemantics*");;
-      memory) CAT_PATTERNS+=("MemoryLeakTest*" "MemoryStressTest*" "ExtendedRuntimeMemoryTest*" "MemoryPressureTest*");;
-      performance) RUN_HEAVY=1 ;; # heavy handled later
+      logger) 
+        # Find all Logger-related tests
+        while IFS= read -r test; do
+          if [[ $test =~ ^Logger ]]; then
+            CAT_PATTERNS+=("$test*")
+          fi
+        done <<< "$AVAILABLE_TESTS"
+        ;;
+      pipeline) 
+        # Find Pipeline and FrameId tests
+        while IFS= read -r test; do
+          if [[ $test =~ ^(Pipeline|FrameId) ]]; then
+            CAT_PATTERNS+=("$test*")
+          fi
+        done <<< "$AVAILABLE_TESTS"
+        ;;
+      processing) 
+        # Find Processing and FastGaussian tests
+        while IFS= read -r test; do
+          if [[ $test =~ ^(Processing|FastGaussian) ]]; then
+            CAT_PATTERNS+=("$test*")
+          fi
+        done <<< "$AVAILABLE_TESTS"
+        ;;
+      shm) 
+        # Find SharedMemory tests
+        while IFS= read -r test; do
+          if [[ $test =~ ^SharedMemory ]]; then
+            CAT_PATTERNS+=("$test*")
+          fi
+        done <<< "$AVAILABLE_TESTS"
+        ;;
+      transport) 
+        # Find transport-related tests
+        while IFS= read -r test; do
+          if [[ $test =~ ^(Handshake|ClientHealth|Transport) ]]; then
+            CAT_PATTERNS+=("$test*")
+          fi
+        done <<< "$AVAILABLE_TESTS"
+        ;;
+      sensor) 
+        # Find sensor tests
+        while IFS= read -r test; do
+          if [[ $test =~ (Sensor|Kinect) ]]; then
+            CAT_PATTERNS+=("$test*")
+          fi
+        done <<< "$AVAILABLE_TESTS"
+        ;;
+      integration) 
+        # Find integration tests
+        while IFS= read -r test; do
+          if [[ $test =~ ^(SyntheticSensorPipeline|ProcessingScaleSemantics|ProcessBlackBox|FaultInjection|TransportMidStreamAttach) ]]; then
+            CAT_PATTERNS+=("$test*")
+          fi
+        done <<< "$AVAILABLE_TESTS"
+        ;;
+      memory) 
+        # Find memory tests
+        while IFS= read -r test; do
+          if [[ $test =~ Memory ]]; then
+            CAT_PATTERNS+=("$test*")
+          fi
+        done <<< "$AVAILABLE_TESTS"
+        ;;
+      performance) 
+        RUN_HEAVY=1 ;; # heavy handled later
+      *)
+        echo -e "${YELLOW}Unknown category: $c. Available test suites:${RESET}" >&2
+        echo "$AVAILABLE_TESTS" | head -5 >&2
+        ;;
     esac
   done
   if [ ${#CAT_PATTERNS[@]} -gt 0 ]; then

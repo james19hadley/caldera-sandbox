@@ -7,10 +7,11 @@
 #   ./sensor_setup.sh test         # Test sensor connections
 #
 # Build the project:
-#   ./build.sh                    # Clean build all targets
-#   ./build.sh -i                 # Incremental build all targets
-#   ./build.sh SensorViewer       # Build specific target
-#   ./build.sh -i SensorBackend CalderaTests  # Incremental build specific targets
+#   ./build.sh                    # Clean build all targets (Release)
+#   ./build.sh -i                 # Incremental build all targets (Release)
+#   ./build.sh -d                 # Clean build all targets (Debug)
+#   ./build.sh -r SensorViewer    # Build specific target (Release)
+#   ./build.sh -i -d CalderaTests # Incremental build specific targets (Debug)
 #
 # Available targets: SensorBackend, SensorViewer, CalderaTests, CalderaHeavyTests
 #
@@ -55,17 +56,24 @@ BUILD_DIR="build"
 
 # Parse arguments before any destructive actions
 INCREMENTAL=false
+BUILD_TYPE=Release  # Default to Release for production performance
 TARGETS=()
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		-i|--incremental)
 			INCREMENTAL=true; shift ;;
+		-r|--release)
+			BUILD_TYPE=Release; shift ;;
+		-d|--debug)
+			BUILD_TYPE=Debug; shift ;;
 		-h|--help)
-			echo "Usage: $0 [-i|--incremental] [TARGET1] [TARGET2] ..."
+			echo "Usage: $0 [-i|--incremental] [-r|--release|-d|--debug] [TARGET1] [TARGET2] ..."
 			echo ""
 			echo "Options:"
 			echo "  -i, --incremental    Don't clean build directory"
+			echo "  -r, --release        Release build (optimized, default)"
+			echo "  -d, --debug          Debug build (symbols, no optimization)"
 			echo "  -h, --help          Show this help"
 			echo ""
 			echo "Available targets:"
@@ -76,16 +84,19 @@ while [[ $# -gt 0 ]]; do
 			echo "  CalderaHeavyTests   Heavy/stress & benchmark tests"
 			echo ""
 			echo "Examples:"
-			echo "  $0                           # Build all targets (clean)"
-			echo "  $0 -i                        # Build all targets (incremental)"  
-			echo "  $0 SensorViewer              # Build only SensorViewer (clean)"
-			echo "  $0 -i SensorBackend CalderaTests  # Build specific targets (incremental)"
+			echo "  $0                           # Build all targets (clean, release)"
+			echo "  $0 -i                        # Build all targets (incremental, release)"  
+			echo "  $0 -d                        # Build all targets (clean, debug)"
+			echo "  $0 -i -d CalderaTests        # Build tests (incremental, debug)"
+			echo "  $0 -r SensorViewer           # Build viewer (clean, release)"
+			echo "  $0 -i SensorBackend CalderaTests  # Build specific targets (incremental, release)"
 			exit 0 ;;
 		SensorBackend|SensorViewer|CalderaTests|CalderaHeavyTests)
 			TARGETS+=("$1"); shift ;;
 		*) 
 			echo "Error: Unknown option or target: $1"
 			echo "Available targets: SensorBackend, SensorViewer, CalderaTests, CalderaHeavyTests"
+			echo "Available options: -i (incremental), -r (release), -d (debug), -h (help)"
 			echo "Use -h for help"
 			exit 1 ;;
 	esac
@@ -123,7 +134,7 @@ else
 fi
 
 # 2. Configure the project using CMake.
-echo "--- Configuring project ---"
+echo "--- Configuring project ($BUILD_TYPE build) ---"
 
 # Forward optional feature flags to CMake
 EXTRA_CMAKE_FLAGS=()
@@ -162,7 +173,7 @@ if [ "${CALDERA_ENABLE_VALGRIND:-0}" = "1" ] || [ "${CALDERA_ENABLE_VALGRIND:-OF
     EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_VALGRIND=ON )
 fi
 
-cmake -B $BUILD_DIR -S . -DCALDERA_BUILD_TESTS=ON -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake "${EXTRA_CMAKE_FLAGS[@]}"
+cmake -B $BUILD_DIR -S . -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCALDERA_BUILD_TESTS=ON -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake "${EXTRA_CMAKE_FLAGS[@]}"
 
 # 3. Build the project (using all CPU cores)
 if [ ${#TARGETS[@]} -eq 0 ]; then

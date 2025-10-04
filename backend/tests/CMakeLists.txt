@@ -16,6 +16,7 @@ add_executable(CalderaTests
     # processing
     processing/test_processing_conversion.cpp
     processing/test_processing_shm_negatives.cpp
+    processing/test_FastGaussianBlur.cpp
     # shm
     shm/test_shm_reader.cpp
     shm/test_shm_overflow.cpp

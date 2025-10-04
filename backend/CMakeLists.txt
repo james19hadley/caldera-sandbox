@@ -121,6 +121,7 @@ add_library(caldera_backend_core STATIC
     src/hal/MockSensorDevice.cpp
     src/hal/SyntheticSensorDevice.cpp
     src/processing/ProcessingManager.cpp
+    src/processing/FastGaussianBlur.cpp
     src/processing/IHeightMapFilter.h
     src/transport/LocalTransportServer.cpp
     src/transport/HandshakeServer.cpp
