@@ -48,6 +48,9 @@ add_executable(CalderaTests
     # memory leak tests
     memory/test_memory_leaks.cpp
     memory/test_hal_memory.cpp
+    memory/test_memory_hal_processing_integration.cpp
+    memory/test_memory_processing_transport_integration.cpp
+    memory/test_memory_full_pipeline_integration.cpp
     memory/test_processing_memory.cpp
     # helpers (non-test utilities referenced by tests)
     helpers/TestLocalTransportClient.cpp
