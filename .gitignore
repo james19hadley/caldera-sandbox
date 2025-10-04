@@ -60,5 +60,5 @@ frontend/Caldera/[Aa]ssets/AssetStoreTools*
 
 # --- IDE specific ---
 .vscode/
-SARndbox-2.8/
+extras/
 
