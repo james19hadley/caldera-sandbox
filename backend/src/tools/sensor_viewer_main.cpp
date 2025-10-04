@@ -2,6 +2,7 @@
 #include "tools/SimpleViewer.h"
 #include "tools/VideoWindow.h"
 #include "tools/SensorEnumerator.h"
+#include "common/SensorResolutions.h"
 #include "common/Logger.h"
 #include <iostream>
 #include <signal.h>
@@ -39,7 +40,7 @@ void show_usage(const char* program_name) {
     std::cout << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << "  -t, --time SECONDS    Run for specified seconds (default: run until Ctrl+C)" << std::endl;
-    std::cout << "  -s, --sensor TYPE     Sensor type: auto, v1, v2 (default: auto). If auto and multiple available you'll be prompted." << std::endl;
+    std::cout << "  -s, --sensor TYPE     Sensor type: auto, v1, v2, kinect_v1, kinect_v2 (default: auto). If auto and multiple available you'll be prompted." << std::endl;
     std::cout << "  -l, --list            List detected sensors and exit" << std::endl;
     std::cout << "  -m, --mode MODE       Output mode: text, ascii, depth-stats, color-stats, depth-window, color-window (alias: window=depth-window)" << std::endl;
     std::cout << "  -w, --window TYPE     (Deprecated alias of --mode for backward compatibility)" << std::endl;
@@ -105,13 +106,13 @@ int main(int argc, char* argv[]) {
                 std::string sensor_str = argv[++i];
                 if (sensor_str == "auto") {
                     sensor_type = caldera::backend::tools::SensorType::AUTO_DETECT;
-                } else if (sensor_str == "v1") {
+                } else if (sensor_str == "v1" || sensor_str == "kinect_v1") {
                     sensor_type = caldera::backend::tools::SensorType::KINECT_V1;
-                } else if (sensor_str == "v2") {
+                } else if (sensor_str == "v2" || sensor_str == "kinect_v2") {
                     sensor_type = caldera::backend::tools::SensorType::KINECT_V2;
                 } else {
                     std::cerr << "Error: Invalid sensor type: " << sensor_str << std::endl;
-                    std::cerr << "Valid types: auto, v1, v2" << std::endl;
+                    std::cerr << "Valid types: auto, v1, v2, kinect_v1, kinect_v2" << std::endl;
                     return 1;
                 }
             } else {
@@ -242,9 +243,20 @@ int main(int argc, char* argv[]) {
     if (output_mode == ViewOutputMode::DEPTH_ASCII || output_mode == ViewOutputMode::DEPTH_STATS || output_mode == ViewOutputMode::COLOR_STATS) {
         simple_viewer = std::make_unique<caldera::backend::tools::SimpleViewer>("Kinect Data Viewer");
     } else if (output_mode == ViewOutputMode::DEPTH_WINDOW) {
-        video_window = std::make_unique<caldera::backend::tools::VideoWindow>("Kinect Depth Stream", 640, 480);
+        video_window = std::make_unique<caldera::backend::tools::VideoWindow>("Kinect Depth Stream", 
+            caldera::backend::common::Display::KINECT_V1_DEPTH_WINDOW_WIDTH, 
+            caldera::backend::common::Display::KINECT_V1_DEPTH_WINDOW_HEIGHT);
     } else if (output_mode == ViewOutputMode::COLOR_WINDOW) {
-        video_window = std::make_unique<caldera::backend::tools::VideoWindow>("Kinect Color Stream", 960, 540);
+        // Use appropriate resolution based on sensor type
+        if (sensor_type == caldera::backend::tools::SensorType::KINECT_V1) {
+            video_window = std::make_unique<caldera::backend::tools::VideoWindow>("Kinect Color Stream", 
+                caldera::backend::common::Display::KINECT_V1_COLOR_WINDOW_WIDTH, 
+                caldera::backend::common::Display::KINECT_V1_COLOR_WINDOW_HEIGHT);
+        } else {
+            video_window = std::make_unique<caldera::backend::tools::VideoWindow>("Kinect Color Stream", 
+                caldera::backend::common::Display::KINECT_V2_COLOR_WINDOW_WIDTH, 
+                caldera::backend::common::Display::KINECT_V2_COLOR_WINDOW_HEIGHT);
+        }
     }
 
     // Headless / DISPLAY check

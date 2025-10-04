@@ -5,6 +5,7 @@
 
 #include "IWorldFrameClient.h"
 #include "SharedMemoryReader.h"
+#include "common/SensorResolutions.h"
 #include <string>
 #include <chrono>
 
@@ -14,8 +15,8 @@ class SharedMemoryWorldFrameClient : public IWorldFrameClient {
 public:
     struct Config {
         std::string shm_name;    // required
-        uint32_t max_width = 640;  // capacity (must match server capacity)
-        uint32_t max_height = 480; // capacity
+        uint32_t max_width = common::Transport::SHM_SINGLE_SENSOR_WIDTH;  // capacity (must match server capacity)
+        uint32_t max_height = common::Transport::SHM_SINGLE_SENSOR_HEIGHT; // capacity
     };
 
     SharedMemoryWorldFrameClient(std::shared_ptr<spdlog::logger> logger, Config cfg);

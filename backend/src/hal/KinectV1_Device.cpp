@@ -1,5 +1,6 @@
 #include "hal/KinectV1_Device.h"
 #include "common/LoggingNames.h"
+#include "common/SensorResolutions.h"
 #include <cstring>
 #include <chrono>
 
@@ -83,7 +84,7 @@ bool KinectV1_Device::open() {
     freenect_set_depth_callback(freenect_device_, &KinectV1_Device::depth_callback);
     freenect_set_video_callback(freenect_device_, &KinectV1_Device::video_callback);
 
-    // Configure frame modes (RGB + Depth in mm @ VGA 640x480)
+    // Configure frame modes (RGB + Depth in mm @ VGA resolution)
     freenect_frame_mode vmode = freenect_find_video_mode(FREENECT_RESOLUTION_MEDIUM, FREENECT_VIDEO_RGB);
     freenect_frame_mode dmode = freenect_find_depth_mode(FREENECT_RESOLUTION_MEDIUM, FREENECT_DEPTH_MM);
     if (!vmode.is_valid || !dmode.is_valid) {
@@ -91,11 +92,11 @@ bool KinectV1_Device::open() {
         freenect_close_device(freenect_device_); freenect_device_ = nullptr; freenect_shutdown(freenect_context_); freenect_context_ = nullptr; return false;
     }
     if (freenect_set_video_mode(freenect_device_, vmode) < 0) {
-        logger_->critical("Failed to set video mode RGB 640x480");
+        logger_->critical("Failed to set video mode RGB {}x{}", common::KinectV1::WIDTH, common::KinectV1::HEIGHT);
         freenect_close_device(freenect_device_); freenect_device_ = nullptr; freenect_shutdown(freenect_context_); freenect_context_ = nullptr; return false;
     }
     if (freenect_set_depth_mode(freenect_device_, dmode) < 0) {
-        logger_->critical("Failed to set depth mode MM 640x480");
+        logger_->critical("Failed to set depth mode MM {}x{}", common::KinectV1::WIDTH, common::KinectV1::HEIGHT);
         freenect_close_device(freenect_device_); freenect_device_ = nullptr; freenect_shutdown(freenect_context_); freenect_context_ = nullptr; return false;
     }
 
@@ -161,7 +162,7 @@ void KinectV1_Device::video_callback(freenect_device* dev, void* video, uint32_t
 void KinectV1_Device::processDepthFrame(void* depth, uint32_t timestamp) {
     if (!frame_callback_) return;
     uint16_t* depthData = static_cast<uint16_t*>(depth);
-    // Kinect v1 depth resolution (default): 640x480
+    // Kinect v1 depth resolution: VGA (see SensorResolutions.h)
     pending_depth_.sensorId = "KinectV1";
     // Convert provided device timestamp (in ms) to ns if plausible; else use steady clock
     uint64_t ts_ns = 0;
@@ -172,9 +173,9 @@ void KinectV1_Device::processDepthFrame(void* depth, uint32_t timestamp) {
             std::chrono::steady_clock::now().time_since_epoch()).count();
     }
     pending_depth_.timestamp_ns = ts_ns;
-    pending_depth_.width = 640; // assume default
-    pending_depth_.height = 480;
-    pending_depth_.data.assign(depthData, depthData + (640*480));
+    pending_depth_.width = common::KinectV1::WIDTH;
+    pending_depth_.height = common::KinectV1::HEIGHT;
+    pending_depth_.data.assign(depthData, depthData + common::KinectV1::PIXEL_COUNT);
     depth_ready_.store(true, std::memory_order_release);
 
     if (depth_ready_.load(std::memory_order_acquire) && color_ready_.load(std::memory_order_acquire)) {
@@ -196,9 +197,9 @@ void KinectV1_Device::processColorFrame(void* video, uint32_t timestamp) {
                 std::chrono::steady_clock::now().time_since_epoch()).count();
     }
     pending_color_.timestamp_ns = ts_ns;
-    pending_color_.width = 640; // RGB at 640x480 by default
-    pending_color_.height = 480;
-    pending_color_.data.assign(rgb, rgb + (640*480*3)); // RGB format
+    pending_color_.width = common::KinectV1::WIDTH;
+    pending_color_.height = common::KinectV1::HEIGHT;
+    pending_color_.data.assign(rgb, rgb + common::KinectV1::COLOR_FRAME_SIZE_BYTES); // RGB format
     color_ready_.store(true, std::memory_order_release);
 
     if (depth_ready_.load(std::memory_order_acquire) && color_ready_.load(std::memory_order_acquire)) {
