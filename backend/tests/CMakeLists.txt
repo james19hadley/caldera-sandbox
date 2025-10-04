@@ -52,6 +52,9 @@ add_executable(CalderaTests
     memory/test_memory_processing_transport_integration.cpp
     memory/test_memory_full_pipeline_integration.cpp
     memory/test_processing_memory.cpp
+    memory/test_memory_stress.cpp
+    memory/test_memory_extended_runtime.cpp
+    memory/test_memory_pressure.cpp
     # helpers (non-test utilities referenced by tests)
     helpers/TestLocalTransportClient.cpp
     helpers/TestCalderaClient.cpp

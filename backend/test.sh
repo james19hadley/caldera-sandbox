@@ -23,6 +23,9 @@
 #
 # Available test categories: logger, pipeline, processing, shm, transport, sensor, 
 #                          integration, memory, performance
+#
+# Long-running memory tests (5+ minutes each) are skipped by default.
+# To enable them: export CALDERA_ENABLE_LONG_MEMORY_TESTS=1
 
 set -euo pipefail
 
@@ -101,7 +104,7 @@ while [[ $# -gt 0 ]]; do
       EXTRA_ARGS+=("$1"); shift ;;
     logger|pipeline|processing|shm|transport|sensor|integration|memory|performance)
       CATEGORIES+=("$1"); shift ;;
-    LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|SensorRecording*|KinectV2_DeviceTest*|SharedMemoryRealisticFPS*|SharedMemoryStats*|MemoryLeakTest*|*Stress*)
+    LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|SensorRecording*|KinectV2_DeviceTest*|SharedMemoryRealisticFPS*|SharedMemoryStats*|MemoryLeakTest*|MemoryStressTest*|ExtendedRuntimeMemoryTest*|MemoryPressureTest*|*Stress*)
       SPECIFIC_TESTS+=("$1"); shift ;;
     *)
       # Treat any remaining bare argument as a test suite/pattern (e.g. SyntheticSensorPipeline)
@@ -189,7 +192,7 @@ if [ ${#CATEGORIES[@]} -gt 0 ]; then
       transport) CAT_PATTERNS+=("Handshake*" "HandshakeStats*" "ClientHealth*");;
       sensor) CAT_PATTERNS+=("KinectV2_DeviceTest*" "SensorRecordingTest*");;
       integration) CAT_PATTERNS+=("SyntheticSensorPipeline*" "ProcessingScaleSemantics*");;
-      memory) CAT_PATTERNS+=("MemoryLeakTest*");;
+      memory) CAT_PATTERNS+=("MemoryLeakTest*" "MemoryStressTest*" "ExtendedRuntimeMemoryTest*" "MemoryPressureTest*");;
       performance) RUN_HEAVY=1 ;; # heavy handled later
     esac
   done
