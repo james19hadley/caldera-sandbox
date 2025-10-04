@@ -34,6 +34,22 @@ RED="\033[31m"
 YELLOW="\033[33m"
 RESET="\033[0m"
 
+# Set default environment variables for more stable test execution
+setup_test_environment() {
+  # Set reasonable defaults for test stability (can be overridden by user)
+  export CALDERA_STRICT_RECONNECT="${CALDERA_STRICT_RECONNECT:-0}"
+  
+  # Reduce log noise during tests - only show warnings and errors by default
+  export CALDERA_LOG_LEVEL="${CALDERA_LOG_LEVEL:-warn}"  # Changed from 'error' to 'warn' for better balance
+  export CALDERA_COMPACT_FRAME_LOG="${CALDERA_COMPACT_FRAME_LOG:-1}"
+  
+  # Disable frame-level tracing during tests to reduce noise
+  export CALDERA_LOG_FRAME_TRACE_EVERY="${CALDERA_LOG_FRAME_TRACE_EVERY:-0}"
+  
+  # Quiet mode for synthetic sensors during tests
+  export CALDERA_QUIET_MODE="${CALDERA_QUIET_MODE:-1}"
+}
+
 if [ ! -d "$BUILD_DIR" ]; then
   echo -e "${YELLOW}Build directory not found. Running fresh build...${RESET}" >&2
   (cd "$SCRIPT_DIR" && ./build.sh)
@@ -215,6 +231,7 @@ if [ $RUN_HEAVY -eq 1 ]; then
     echo -e "${YELLOW}Heavy tests binary not found; did CMake generate it?${RESET}" >&2
   fi
   echo -e "${GREEN}Running HEAVY tests binary:${RESET} $TEST_BIN" >&2
+  setup_test_environment
   set +e
   "$TEST_BIN" --gtest_color=yes "${EXTRA_ARGS[@]}"
 else
@@ -230,6 +247,7 @@ else
     EXTRA_ARGS+=(--gtest_filter=-*Stress)
   fi
   echo -e "${GREEN}Running GoogleTest binary:${RESET} $TEST_BIN" >&2
+  setup_test_environment
   set +e
   "$TEST_BIN" --gtest_color=yes "${EXTRA_ARGS[@]}"
 fi
