@@ -8,6 +8,7 @@
 
 namespace caldera::backend::hal {
     class KinectV2_Device;
+    class KinectV1_Device;
     class SensorRecorder;
     class MockSensorDevice;
     class ISensorDevice;
@@ -42,18 +43,18 @@ using ColorFrameCallback = std::function<void(const caldera::backend::common::Ra
  * This utility opens available Kinect devices and displays depth/color data.
  * Supports Kinect V2 (current) and prepared for Kinect V1 (future).
  */
-class KinectDataViewer {
+class SensorViewerCore {
 public:
-    explicit KinectDataViewer(SensorType type = SensorType::AUTO_DETECT, ViewMode mode = ViewMode::TEXT_ONLY);
+    explicit SensorViewerCore(SensorType type = SensorType::AUTO_DETECT, ViewMode mode = ViewMode::TEXT_ONLY);
     
     /**
      * @brief Constructor for playback mode
      * @param dataFile Path to recorded data file 
      * @param mode View mode
      */
-    explicit KinectDataViewer(const std::string& dataFile, ViewMode mode = ViewMode::TEXT_ONLY);
+    explicit SensorViewerCore(const std::string& dataFile, ViewMode mode = ViewMode::TEXT_ONLY);
     
-    ~KinectDataViewer() noexcept;
+    ~SensorViewerCore() noexcept;
 
     /**
      * @brief Start the viewer
@@ -127,8 +128,8 @@ private:
     std::atomic<bool> stop_called_{false};
     std::unique_ptr<std::thread> viewer_thread_;
     
-    // Device pointers (only one will be used)
-    caldera::backend::hal::KinectV2_Device* kinect_device_;  
+    // Active live sensor device (v1 or v2) when not in playback mode
+    std::unique_ptr<caldera::backend::hal::ISensorDevice> sensor_device_;
     std::unique_ptr<caldera::backend::hal::MockSensorDevice> mock_device_;
     
     // Playback file path (for playback mode)

@@ -1,5 +1,6 @@
-#include "tools/KinectDataViewer.h"
+#include "tools/SensorViewerCore.h"
 #include "hal/KinectV2_Device.h"
+#include "hal/KinectV1_Device.h"
 #include "hal/SensorRecorder.h"
 #include "hal/MockSensorDevice.h"
 #include "hal/ISensorDevice.h"
@@ -7,6 +8,7 @@
 #include "common/Logger.h"
 
 #include <iostream>
+#include <cstdlib>
 #include <chrono>
 #include <iomanip>
 #include <thread>
@@ -16,39 +18,52 @@ namespace caldera::backend::tools {
 using namespace caldera::backend::hal;
 using namespace caldera::backend::common;
 
-KinectDataViewer::KinectDataViewer(SensorType type, ViewMode mode) 
-    : sensorType_(type), viewMode_(mode), kinect_device_(nullptr) {
-    
-    // Auto-detect or create specified sensor type
+SensorViewerCore::SensorViewerCore(SensorType type, ViewMode mode) 
+    : sensorType_(type), viewMode_(mode) {
+
+    // Auto-detect (basic): allow environment override CALDERA_SENSOR_TYPE=KINECT_V1|KINECT_V2
     if (sensorType_ == SensorType::AUTO_DETECT) {
-        // For now, try Kinect V2 first
-        // TODO: Add detection logic for multiple sensor types
-        sensorType_ = SensorType::KINECT_V2;
+        if (const char* env = std::getenv("CALDERA_SENSOR_TYPE")) {
+            std::string v(env);
+            for (auto &c : v) c = toupper(c);
+            if (v == "KINECT_V1" || v == "V1" || v == "K1") sensorType_ = SensorType::KINECT_V1;
+            else if (v == "KINECT_V2" || v == "V2" || v == "K2") sensorType_ = SensorType::KINECT_V2;
+        }
+        if (sensorType_ == SensorType::AUTO_DETECT) {
+            // Default preference: V2 first then fallback tried at start()
+            sensorType_ = SensorType::KINECT_V2;
+        }
     }
     
     switch (sensorType_) {
         case SensorType::KINECT_V2:
-            kinect_device_ = new caldera::backend::hal::KinectV2_Device();
+            sensor_device_ = std::make_unique<caldera::backend::hal::KinectV2_Device>();
             std::cout << "Initializing Kinect V2 sensor..." << std::endl;
             break;
         case SensorType::KINECT_V1:
-            // TODO: Implement when KinectV1_Device is ready
-            std::cerr << "Kinect V1 support not yet implemented" << std::endl;
-            kinect_device_ = nullptr;
+        {
+#if CALDERA_HAVE_KINECT_V1
+            sensor_device_ = std::make_unique<caldera::backend::hal::KinectV1_Device>();
+            std::cout << "Initializing Kinect V1 sensor..." << std::endl;
+#else
+            std::cerr << "Built without Kinect V1 support (CALDERA_HAVE_KINECT_V1=0)" << std::endl;
+            sensor_device_.reset();
+#endif
+        }
             break;
         case SensorType::PLAYBACK_FILE:
             // Should not reach here - use playback constructor
             std::cerr << "Error: Use playback constructor for file playback" << std::endl;
-            kinect_device_ = nullptr;
+            sensor_device_.reset();
             break;
         default:
-            kinect_device_ = nullptr;
+            sensor_device_.reset();
             break;
     }
 }
 
-KinectDataViewer::KinectDataViewer(const std::string& dataFile, ViewMode mode)
-    : sensorType_(SensorType::PLAYBACK_FILE), viewMode_(mode), kinect_device_(nullptr), playback_file_(dataFile) {
+SensorViewerCore::SensorViewerCore(const std::string& dataFile, ViewMode mode)
+    : sensorType_(SensorType::PLAYBACK_FILE), viewMode_(mode), playback_file_(dataFile) {
     
     std::cout << "Initializing playback from file: " << dataFile << std::endl;
     
@@ -59,7 +74,7 @@ KinectDataViewer::KinectDataViewer(const std::string& dataFile, ViewMode mode)
     mock_device_->setPlaybackFPS(30.0);
 }
 
-KinectDataViewer::~KinectDataViewer() noexcept {
+SensorViewerCore::~SensorViewerCore() noexcept {
     try {
         // Minimal destructor to avoid terminate call
         // All cleanup should be done explicitly via stop() before destruction
@@ -74,15 +89,15 @@ KinectDataViewer::~KinectDataViewer() noexcept {
     }
 }
 
-void KinectDataViewer::setDepthFrameCallback(DepthFrameCallback callback) {
+void SensorViewerCore::setDepthFrameCallback(DepthFrameCallback callback) {
     depth_callback_ = callback;
 }
 
-void KinectDataViewer::setColorFrameCallback(ColorFrameCallback callback) {
+void SensorViewerCore::setColorFrameCallback(ColorFrameCallback callback) {
     color_callback_ = callback;
 }
 
-bool KinectDataViewer::start() {
+bool SensorViewerCore::start() {
     if (running_.load()) {
         return true; // Already running
     }
@@ -93,10 +108,31 @@ bool KinectDataViewer::start() {
         return false;
     }
 
-    // Try to open device
+    // Try to open primary device (may fallback from V2 -> V1 if available)
     if (!device->open()) {
-        std::cerr << "Failed to open sensor device" << std::endl;
-        return false;
+#if CALDERA_HAVE_KINECT_V1
+        if (sensorType_ == SensorType::KINECT_V2) {
+            std::cerr << "Primary Kinect V2 open failed; attempting Kinect V1 fallback..." << std::endl;
+            try {
+                sensor_device_.reset();
+                sensor_device_ = std::make_unique<caldera::backend::hal::KinectV1_Device>();
+                sensorType_ = SensorType::KINECT_V1;
+                device = getCurrentDevice();
+            } catch (...) {
+                std::cerr << "Exception constructing Kinect V1 device during fallback" << std::endl;
+            }
+            if (!device || !device->open()) {
+                std::cerr << "Fallback to Kinect V1 failed." << std::endl;
+                return false;
+            } else {
+                std::cout << "Fallback to Kinect V1 successful." << std::endl;
+            }
+        } else
+#endif
+        {
+            std::cerr << "Failed to open sensor device" << std::endl;
+            return false;
+        }
     }
 
     // Set up frame callback
@@ -123,9 +159,9 @@ bool KinectDataViewer::start() {
     });
 
     running_.store(true);
-    viewer_thread_ = std::make_unique<std::thread>(&KinectDataViewer::viewerLoop, this);
+    viewer_thread_ = std::make_unique<std::thread>(&SensorViewerCore::viewerLoop, this);
     
-    std::cout << "Kinect Data Viewer started. Press Ctrl+C to stop." << std::endl;
+    std::cout << "Sensor Viewer started. Press Ctrl+C to stop." << std::endl;
     std::cout << "Device ID: " << device->getDeviceID() << std::endl;
     
     // Print playback info for file mode
@@ -137,7 +173,7 @@ bool KinectDataViewer::start() {
     return true;
 }
 
-void KinectDataViewer::stop() {
+void SensorViewerCore::stop() {
     // Prevent multiple calls to stop()
     bool expected = false;
     if (!stop_called_.compare_exchange_strong(expected, true)) {
@@ -169,10 +205,10 @@ void KinectDataViewer::stop() {
         // Thread join failed, but don't crash the program
     }
     
-    std::cout << "\nKinect Data Viewer stopped." << std::endl;
+    std::cout << "\nSensor Viewer stopped." << std::endl;
 }
 
-bool KinectDataViewer::isRunning() const {
+bool SensorViewerCore::isRunning() const {
     if (!running_.load()) {
         return false;
     }
@@ -185,7 +221,7 @@ bool KinectDataViewer::isRunning() const {
     return true;
 }
 
-void KinectDataViewer::runFor(int seconds) {
+void SensorViewerCore::runFor(int seconds) {
     if (!start()) {
         return;
     }
@@ -210,7 +246,7 @@ void KinectDataViewer::runFor(int seconds) {
     }
 }
 
-void KinectDataViewer::viewerLoop() {
+void SensorViewerCore::viewerLoop() {
     auto last_print = std::chrono::steady_clock::now();
     int frame_count = 0;
     
@@ -233,7 +269,7 @@ void KinectDataViewer::viewerLoop() {
     }
 }
 
-void KinectDataViewer::printFrame(const std::string& type, size_t width, size_t height, 
+void SensorViewerCore::printFrame(const std::string& type, size_t width, size_t height, 
                                  size_t dataSize, uint64_t timestamp) {
     static int depth_count = 0, color_count = 0;
     
@@ -252,7 +288,7 @@ void KinectDataViewer::printFrame(const std::string& type, size_t width, size_t 
     }
 }
 
-bool KinectDataViewer::startRecording(const std::string& filename) {
+bool SensorViewerCore::startRecording(const std::string& filename) {
     if (recorder_) {
         std::cout << "Recording already active" << std::endl;
         return false;
@@ -268,7 +304,7 @@ bool KinectDataViewer::startRecording(const std::string& filename) {
     return true;
 }
 
-void KinectDataViewer::stopRecording() {
+void SensorViewerCore::stopRecording() {
     if (recorder_) {
         recorder_->stopRecording();
         std::cout << "Recording stopped. Frames: " << recorder_->getFrameCount() << std::endl;
@@ -276,11 +312,11 @@ void KinectDataViewer::stopRecording() {
     }
 }
 
-bool KinectDataViewer::isRecording() const {
+bool SensorViewerCore::isRecording() const {
     return recorder_ && recorder_->isRecording();
 }
 
-void KinectDataViewer::setPlaybackOptions(bool loop, double fps) {
+void SensorViewerCore::setPlaybackOptions(bool loop, double fps) {
     if (sensorType_ != SensorType::PLAYBACK_FILE || !mock_device_) {
         return;
     }
@@ -291,7 +327,7 @@ void KinectDataViewer::setPlaybackOptions(bool loop, double fps) {
     mock_device_->setPlaybackFPS(fps);
 }
 
-size_t KinectDataViewer::getPlaybackFrameCount() const {
+size_t SensorViewerCore::getPlaybackFrameCount() const {
     if (sensorType_ != SensorType::PLAYBACK_FILE || !mock_device_) {
         return 0;
     }
@@ -299,12 +335,11 @@ size_t KinectDataViewer::getPlaybackFrameCount() const {
     return mock_device_->getFrameCount();
 }
 
-caldera::backend::hal::ISensorDevice* caldera::backend::tools::KinectDataViewer::getCurrentDevice() const {
+caldera::backend::hal::ISensorDevice* caldera::backend::tools::SensorViewerCore::getCurrentDevice() const {
     if (sensorType_ == SensorType::PLAYBACK_FILE) {
         return mock_device_.get();
-    } else {
-        return kinect_device_;
     }
+    return sensor_device_.get();
 }
 
 } // namespace caldera::backend::tools

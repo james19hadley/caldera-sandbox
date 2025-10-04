@@ -2,6 +2,7 @@
 #define CALDERA_BACKEND_TRANSPORT_SHARED_MEMORY_TRANSPORT_SERVER_H
 
 #include "ITransportServer.h"
+#include "common/SensorResolutions.h"
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -22,8 +23,8 @@ public:
         // These are CAPACITY LIMITS, not enforced fixed dimensions. Each frame publishes its
         // own width/height in BufferMeta; if a frame exceeds capacity it is dropped.
         // A future auto-resize policy could remap instead of drop.
-        uint32_t max_width = 640;   
-        uint32_t max_height = 480;  
+        uint32_t max_width = common::Transport::SHM_SINGLE_SENSOR_WIDTH;   // Single sensor default
+        uint32_t max_height = common::Transport::SHM_SINGLE_SENSOR_HEIGHT; // Single sensor default
         uint32_t checksum_interval_ms = 0; // 0 = disabled auto checksum (only if frame.checksum != 0)
         Config() = default;
     };

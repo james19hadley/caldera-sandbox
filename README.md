@@ -91,6 +91,45 @@ The binary layout and publish protocol for the shared memory world-frame transpo
 
 Version 2 (double-buffer) is implemented: two buffers + `active_index` with memory barriers ensure readers always see a fully written frame. Oversized frames are dropped with a rate-limited warning.
 
+## Memory Leak Detection and Testing
+
+The project now includes comprehensive memory leak detection and testing infrastructure:
+
+### Quick Memory Testing
+```bash
+# Run all memory leak tests
+./test.sh memory
+
+# Run specific memory test
+./test.sh MemoryLeakTest.SharedMemoryTransport_CreateDestroy_NoLeaks
+
+# Quick AddressSanitizer check
+./memory_check.sh asan
+
+# Comprehensive memory validation (takes ~10 minutes)
+./memory_check.sh all
+```
+
+### Available Memory Testing Tools
+- **AddressSanitizer (ASan)**: Fast leak detection for development
+- **Valgrind**: Comprehensive analysis (slower)
+- **ThreadSanitizer**: Data race detection
+- **UndefinedBehaviorSanitizer**: Undefined behavior detection
+
+### Memory Profiling
+```bash
+# Profile memory usage over time
+./memory_profile.sh massif SensorBackend
+
+# Analyze heap allocations  
+./memory_profile.sh heaptrack SensorViewer
+
+# Quick baseline check
+./memory_profile.sh baseline
+```
+
+See `backend/MEMORY_MANAGEMENT.md` for detailed documentation.
+
 ## Environment Variables Summary
 
 | Variable | Purpose | Example | Default |
@@ -98,6 +137,8 @@ Version 2 (double-buffer) is implemented: two buffers + `active_index` with memo
 | `CALDERA_LOG_LEVEL` | Override global log level (`trace,debug,info,warn,error,critical,off`) | `CALDERA_LOG_LEVEL=debug` | `info` |
 | `CALDERA_LOG_QUEUE_SIZE` | Async spdlog queue size | `CALDERA_LOG_QUEUE_SIZE=8192` | 4096 (example if set in code; see Logger.cpp) |
 | `CALDERA_LOG_WORKERS` | Async logging worker thread count | `CALDERA_LOG_WORKERS=2` | 1 (if not overridden) |
+| `CALDERA_ENABLE_ASAN` | Enable AddressSanitizer at build time | `CALDERA_ENABLE_ASAN=1` | `0` (off) |
+| `CALDERA_ENABLE_VALGRIND` | Enable Valgrind integration in tests | `CALDERA_ENABLE_VALGRIND=1` | `0` (off) |
 | `CALDERA_DEPTH_SCALE` | Scale factor converting depth units to height map | `CALDERA_DEPTH_SCALE=0.001` | 0.01 (code default) |
 
 Notes:

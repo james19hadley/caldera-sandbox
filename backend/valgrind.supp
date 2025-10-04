@@ -1,0 +1,71 @@
+# Valgrind suppression file for Caldera Backend
+# This file contains suppressions for known false positives and third-party library issues
+
+# OpenGL/GLFW suppressions
+{
+   OpenGL_driver_leaks
+   Memcheck:Leak
+   ...
+   obj:*/libGL.so*
+}
+
+{
+   GLFW_init_leaks  
+   Memcheck:Leak
+   ...
+   fun:glfwInit
+}
+
+# libfreenect/USB suppressions  
+{
+   libusb_leaks
+   Memcheck:Leak
+   ...
+   obj:*/libusb-1.0.so*
+}
+
+{
+   libfreenect_leaks
+   Memcheck:Leak
+   ...
+   obj:*/libfreenect.so*
+}
+
+{
+   libfreenect2_leaks
+   Memcheck:Leak
+   ...
+   obj:*/libfreenect2.so*
+}
+
+# spdlog/logging suppressions
+{
+   spdlog_static_init
+   Memcheck:Leak
+   ...
+   fun:*spdlog*
+}
+
+# gtest suppressions
+{
+   gtest_leaks
+   Memcheck:Leak
+   ...
+   fun:*testing*
+}
+
+# vcpkg/system library suppressions
+{
+   vcpkg_runtime_leaks
+   Memcheck:Leak
+   ...
+   obj:*/vcpkg_installed/*
+}
+
+# pthread/thread sanitizer suppressions
+{
+   pthread_create_leaks
+   Memcheck:Leak
+   ...
+   fun:pthread_create*
+}

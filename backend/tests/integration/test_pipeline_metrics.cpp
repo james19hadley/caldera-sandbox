@@ -58,10 +58,20 @@ static void run_basic_metrics(bool inject_drop) {
         EXPECT_EQ(st.derived_dropped, 0u) << "Derived dropped should remain 0 (drop before frames_in).";
     }
 
-    // p95 sanity: should be >= mean (or zero if insufficient samples) and below a generous upper bound (5ms at this small size)
+    // p95 sanity:
+    // Normally p95 >= mean for light-tailed latency distributions. However with very few samples
+    // (we only sleep 500ms @ 40FPS ≈ 20 frames) a single extreme outlier can lift the mean above
+    // the (second largest) sample selected as p95 (since with N=20 the 95th percentile index is 18).
+    // So we allow p95 < mean as long as it is not dramatically lower (e.g. >60% of mean).
     auto p95 = st.p95_latency_ns;
     if (st.mean_latency_ns > 0.0 && p95 > 0) {
-        EXPECT_GE(p95, static_cast<uint64_t>(st.mean_latency_ns));
+        double mean = st.mean_latency_ns;
+        if (p95 < mean) {
+            double ratio = static_cast<double>(p95) / mean;
+            EXPECT_GT(ratio, 0.60) << "p95 latency too far below mean (mean=" << mean << " ns p95=" << p95 << " ns)";
+        } else {
+            EXPECT_GE(p95, static_cast<uint64_t>(mean));
+        }
         EXPECT_LT(p95 / 1e6, 5.0) << "p95 latency unexpectedly high";
     }
 

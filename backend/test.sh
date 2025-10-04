@@ -11,6 +11,11 @@
 #   ./test.sh LoggerBasic.InitializeAndGet  # Run specific test
 #   ./test.sh Logger*            # Run tests matching pattern
 #
+# Memory testing:
+#   ./test.sh --memory-quick     # Quick memory tests only (no Extended Runtime)
+#   ./test.sh --memory-asan      # Memory tests with AddressSanitizer
+#   ./test.sh --memory-full      # Full memory tests (including long-running)
+#
 # Advanced options:
 #   ./test.sh --ctest            # Use ctest instead of direct gtest
 #   ./test.sh --list             # List available tests
@@ -19,7 +24,13 @@
 # Available test suites: LoggerBasic, LoggerLevelsFixture, PipelineBasic, 
 #                       ProcessingConversion, LoggerConcurrency, FrameId, SharedMemory,
 #                       SensorRecording, KinectV2_DeviceTest, SharedMemoryRealisticFPS,
-#                       SharedMemoryStats
+#                       SharedMemoryStats, MemoryLeakTest
+#
+# Available test categories: logger, pipeline, processing, shm, transport, sensor, 
+#                          integration, memory, performance
+#
+# Long-running memory tests (5+ minutes each) are skipped by default.
+# To enable them: export CALDERA_ENABLE_LONG_MEMORY_TESTS=1
 
 set -euo pipefail
 
@@ -30,6 +41,22 @@ GREEN="\033[32m"
 RED="\033[31m"
 YELLOW="\033[33m"
 RESET="\033[0m"
+
+# Set default environment variables for more stable test execution
+setup_test_environment() {
+  # Set reasonable defaults for test stability (can be overridden by user)
+  export CALDERA_STRICT_RECONNECT="${CALDERA_STRICT_RECONNECT:-0}"
+  
+  # Reduce log noise during tests - only show warnings and errors by default
+  export CALDERA_LOG_LEVEL="${CALDERA_LOG_LEVEL:-warn}"  # Changed from 'error' to 'warn' for better balance
+  export CALDERA_COMPACT_FRAME_LOG="${CALDERA_COMPACT_FRAME_LOG:-1}"
+  
+  # Disable frame-level tracing during tests to reduce noise
+  export CALDERA_LOG_FRAME_TRACE_EVERY="${CALDERA_LOG_FRAME_TRACE_EVERY:-0}"
+  
+  # Quiet mode for synthetic sensors during tests
+  export CALDERA_QUIET_MODE="${CALDERA_QUIET_MODE:-1}"
+}
 
 if [ ! -d "$BUILD_DIR" ]; then
   echo -e "${YELLOW}Build directory not found. Running fresh build...${RESET}" >&2
@@ -61,10 +88,14 @@ fi
 SHOW_HELP=0
 LIST_TESTS=0
 USE_CTEST=0
+MEMORY_QUICK=0
+MEMORY_ASAN=0
+MEMORY_FULL=0
 RUN_ALL_TESTS=0
 SPECIFIC_TESTS=()
 EXTRA_ARGS=()
 CATEGORIES=()
+EXCLUDE_PATTERNS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -78,11 +109,17 @@ while [[ $# -gt 0 ]]; do
       EXTRA_ARGS+=("$1"); shift ;;
     --all)
       RUN_ALL_TESTS=1; shift ;;
+    --memory-quick)
+      MEMORY_QUICK=1; shift ;;
+    --memory-asan)
+      MEMORY_ASAN=1; shift ;;
+    --memory-full)
+      MEMORY_FULL=1; shift ;;
     --gtest_*)
       EXTRA_ARGS+=("$1"); shift ;;
-    logger|pipeline|processing|shm|transport|sensor|integration|performance)
+    logger|pipeline|processing|shm|transport|sensor|integration|memory|performance)
       CATEGORIES+=("$1"); shift ;;
-    LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|SensorRecording*|KinectV2_DeviceTest*|SharedMemoryRealisticFPS*|SharedMemoryStats*|*Stress*)
+    LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|SensorRecording*|KinectV2_DeviceTest*|SharedMemoryRealisticFPS*|SharedMemoryStats*|MemoryLeakTest*|MemoryStressTest*|ExtendedRuntimeMemoryTest*|MemoryPressureTest*|*Stress*)
       SPECIFIC_TESTS+=("$1"); shift ;;
     *)
       # Treat any remaining bare argument as a test suite/pattern (e.g. SyntheticSensorPipeline)
@@ -101,6 +138,9 @@ if [ $SHOW_HELP -eq 1 ]; then
   echo "  --ctest         Use ctest instead of direct gtest"
   echo "  --heavy         Run heavy/stress tests"
   echo "  --all           Run all tests (light + heavy)"
+  echo "  --memory-quick  Run quick memory tests (no ExtendedRuntime)"
+  echo "  --memory-asan   Build with AddressSanitizer and run memory tests"
+  echo "  --memory-full   Run full memory tests (including long-running)"
   echo ""
   echo "Test Patterns:"
   echo "  LoggerBasic                    # Run entire test suite"
@@ -111,6 +151,8 @@ if [ $SHOW_HELP -eq 1 ]; then
   echo "  $0                           # Run light tests"
   echo "  $0 --heavy                   # Run heavy tests"
   echo "  $0 LoggerBasic               # Run Logger tests only"
+  echo "  $0 --memory-asan             # Memory tests with AddressSanitizer"
+  echo "  $0 --memory-quick            # Quick memory validation"
   echo "  $0 --list                    # Show all available tests"
   exit 0
 fi
@@ -119,6 +161,33 @@ if [ $LIST_TESTS -eq 1 ]; then
   echo -e "${GREEN}Available tests:${RESET}"
   "$TEST_BIN" --gtest_list_tests 2>/dev/null
   exit 0
+fi
+
+# Handle memory testing flags
+if [ $MEMORY_QUICK -eq 1 ]; then
+  echo -e "${GREEN}Running quick memory tests (no ExtendedRuntime)...${RESET}"
+  CATEGORIES=("memory")
+  EXCLUDE_PATTERNS=("ExtendedRuntimeMemoryTest*")
+fi
+
+if [ $MEMORY_ASAN -eq 1 ]; then
+  echo -e "${GREEN}Building with AddressSanitizer and running memory tests...${RESET}"
+  export ASAN_OPTIONS="abort_on_error=1:halt_on_error=1:check_initialization_order=1:detect_leaks=1"
+  (cd "$SCRIPT_DIR" && ./build.sh -s asan)
+  # Update test binary path after rebuild
+  if [ -f "${BUILD_DIR}/tests/CalderaTests" ]; then
+    TEST_BIN="${BUILD_DIR}/tests/CalderaTests"
+  elif [ -f "${BUILD_DIR}/CalderaTests" ]; then
+    TEST_BIN="${BUILD_DIR}/CalderaTests"
+  fi
+  CATEGORIES=("memory")
+  EXCLUDE_PATTERNS=("ExtendedRuntimeMemoryTest*")  # Skip long tests by default
+fi
+
+if [ $MEMORY_FULL -eq 1 ]; then
+  echo -e "${GREEN}Running full memory tests (including long-running ExtendedRuntime)...${RESET}"
+  export CALDERA_ENABLE_LONG_MEMORY_TESTS=1
+  CATEGORIES=("memory")
 fi
 
 if [ $USE_CTEST -eq 1 ]; then
@@ -170,6 +239,7 @@ if [ ${#CATEGORIES[@]} -gt 0 ]; then
       transport) CAT_PATTERNS+=("Handshake*" "HandshakeStats*" "ClientHealth*");;
       sensor) CAT_PATTERNS+=("KinectV2_DeviceTest*" "SensorRecordingTest*");;
       integration) CAT_PATTERNS+=("SyntheticSensorPipeline*" "ProcessingScaleSemantics*");;
+      memory) CAT_PATTERNS+=("MemoryLeakTest*" "MemoryStressTest*" "ExtendedRuntimeMemoryTest*" "MemoryPressureTest*");;
       performance) RUN_HEAVY=1 ;; # heavy handled later
     esac
   done
@@ -197,6 +267,25 @@ if [ ${#CATEGORIES[@]} -gt 0 ]; then
     else
       EXTRA_ARGS+=(--gtest_filter="$CAT_JOIN")
     fi
+    
+    # Handle exclusion patterns if specified
+    if [ -n "${EXCLUDE_PATTERNS:-}" ] && [ ${#EXCLUDE_PATTERNS[@]} -gt 0 ]; then
+      # Build exclusion string
+      EXCLUDE_JOIN=""
+      for ex in "${EXCLUDE_PATTERNS[@]}"; do
+        if [ -z "$EXCLUDE_JOIN" ]; then EXCLUDE_JOIN="-$ex"; else EXCLUDE_JOIN="$EXCLUDE_JOIN:-$ex"; fi
+      done
+      
+      # Append exclusions to existing filter
+      for i in "${!EXTRA_ARGS[@]}"; do
+        case ${EXTRA_ARGS[$i]} in
+          --gtest_filter=*)
+            EXISTING=${EXTRA_ARGS[$i]#--gtest_filter=}
+            EXTRA_ARGS[$i]=--gtest_filter="$EXISTING:$EXCLUDE_JOIN"
+            ;;
+        esac
+      done
+    fi
   fi
 fi
 if [ $RUN_HEAVY -eq 1 ]; then
@@ -211,6 +300,7 @@ if [ $RUN_HEAVY -eq 1 ]; then
     echo -e "${YELLOW}Heavy tests binary not found; did CMake generate it?${RESET}" >&2
   fi
   echo -e "${GREEN}Running HEAVY tests binary:${RESET} $TEST_BIN" >&2
+  setup_test_environment
   set +e
   "$TEST_BIN" --gtest_color=yes "${EXTRA_ARGS[@]}"
 else
@@ -226,6 +316,7 @@ else
     EXTRA_ARGS+=(--gtest_filter=-*Stress)
   fi
   echo -e "${GREEN}Running GoogleTest binary:${RESET} $TEST_BIN" >&2
+  setup_test_environment
   set +e
   "$TEST_BIN" --gtest_color=yes "${EXTRA_ARGS[@]}"
 fi

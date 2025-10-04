@@ -13,7 +13,16 @@ TestLocalTransportClient::TestLocalTransportClient(std::shared_ptr<spdlog::logge
 TestLocalTransportClient::~TestLocalTransportClient() { closeAll(); }
 
 void TestLocalTransportClient::logError(const char* what, int err) {
-    if (log_) log_->error("Client {} error: {}", what, strerror(err));
+    if (!log_) return;
+    // Heuristic: negative-path tests name their logger with suffix/segment ".Bad".
+    // For those we downgrade severity to info so the test output isn't alarming (still visible).
+    const std::string& lname = log_->name();
+    bool downgrade = (lname.find(".Bad") != std::string::npos);
+    if (downgrade) {
+        log_->info("[expected-failure-path] {} error: {}", what, strerror(err));
+    } else {
+        log_->error("Client {} error: {}", what, strerror(err));
+    }
 }
 
 bool TestLocalTransportClient::handshake(const Config& cfg, int timeout_ms, const std::string& hello) {

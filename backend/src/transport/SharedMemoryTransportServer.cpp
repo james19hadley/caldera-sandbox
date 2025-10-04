@@ -41,6 +41,14 @@ void SharedMemoryTransportServer::stop() {
         close(fd_);
         fd_ = -1;
     }
+    
+    // Critical: unlink shared memory segment to prevent leaks
+    if (!cfg_.shm_name.empty()) {
+        if (shm_unlink(cfg_.shm_name.c_str()) != 0 && errno != ENOENT) {
+            logger_->warn("shm_unlink failed for {}: {}", cfg_.shm_name, strerror(errno));
+        }
+    }
+    
     logger_->info("SharedMemoryTransportServer stopped");
 }
 
@@ -141,12 +149,15 @@ void SharedMemoryTransportServer::sendWorldFrame(const caldera::backend::common:
     // which defaulted to 1). This enables tests to turn off frame spam by setting the env to 0.
     static int sampleEvery = [](){ if(const char* env = std::getenv("CALDERA_LOG_FRAME_TRACE_EVERY")) { int v = std::atoi(env); return v; } return 1; }();
     static bool compact = [](){ const char* env = std::getenv("CALDERA_COMPACT_FRAME_LOG"); return env && std::string(env) == "1"; }();
-    if (sampleEvery > 0 && (meta.frame_id % sampleEvery) == 0) {
+    static bool quietMode = [](){ const char* env = std::getenv("CALDERA_QUIET_MODE"); return env && std::string(env) == "1"; }();
+    
+    if (sampleEvery > 0 && (meta.frame_id % sampleEvery) == 0 && !quietMode) {
         if (compact) {
             // Compact single-line summary (JSON-ish but without quotes to stay lightweight)
-            // Using info level so it shows even if debug disabled when compact mode requested.
-            logger_->info("FRAME id={} size={}x{} floats={} buf_idx={} active={} checksum={} fps={:.1f}",
-                          meta.frame_id, meta.width, meta.height, meta.float_count, write_index, hdr->active_index, meta.checksum, stats_.last_publish_fps);
+            if (logger_->should_log(spdlog::level::info)) {
+                logger_->log(spdlog::level::info, "FRAME id={} size={}x{} floats={} buf_idx={} active={} checksum={} fps={:.1f}",
+                             meta.frame_id, meta.width, meta.height, meta.float_count, write_index, hdr->active_index, meta.checksum, stats_.last_publish_fps);
+            }
         } else if (logger_->should_log(spdlog::level::debug)) {
             logger_->debug("SHM wrote frame id={} idx={} size={}x{} floats={} active={}", meta.frame_id, write_index, meta.width, meta.height, meta.float_count, hdr->active_index);
         }

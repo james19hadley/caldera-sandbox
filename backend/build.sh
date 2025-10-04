@@ -9,10 +9,10 @@
 # Build the project:
 #   ./build.sh                    # Clean build all targets
 #   ./build.sh -i                 # Incremental build all targets
-#   ./build.sh KinectViewer       # Build specific target
+#   ./build.sh SensorViewer       # Build specific target
 #   ./build.sh -i SensorBackend CalderaTests  # Incremental build specific targets
 #
-# Available targets: SensorBackend, KinectViewer, CalderaTests, CalderaHeavyTests
+# Available targets: SensorBackend, SensorViewer, CalderaTests, CalderaHeavyTests
 #
 # Run tests:
 #   ./test.sh
@@ -21,9 +21,9 @@
 #   ./sensor_setup.sh check        # Quick sensor check
 #   ./sensor_setup.sh test         # Test sensor access
 #
-# View live Kinect data (after build):
-#   ./build/KinectViewer           # View live depth/color data
-#   ./build/KinectViewer -t 10     # View for 10 seconds
+# View live sensor data (after build):
+#   ./build/SensorViewer           # View live depth/color data (auto-detect sensor)
+#   ./build/SensorViewer -t 10     # View for 10 seconds
 
 # Exit immediately if a command exits with a non-zero status.
 set -e
@@ -70,7 +70,7 @@ while [[ $# -gt 0 ]]; do
 			echo ""
 			echo "Available targets:"
 			echo "  SensorBackend       Main application"
-			echo "  KinectViewer        Kinect data viewer utility"
+			echo "  SensorViewer        Multi-sensor viewer utility"
 
 			echo "  CalderaTests        Test suite (regular)"
 			echo "  CalderaHeavyTests   Heavy/stress & benchmark tests"
@@ -78,14 +78,14 @@ while [[ $# -gt 0 ]]; do
 			echo "Examples:"
 			echo "  $0                           # Build all targets (clean)"
 			echo "  $0 -i                        # Build all targets (incremental)"  
-			echo "  $0 KinectViewer              # Build only KinectViewer (clean)"
+			echo "  $0 SensorViewer              # Build only SensorViewer (clean)"
 			echo "  $0 -i SensorBackend CalderaTests  # Build specific targets (incremental)"
 			exit 0 ;;
-		SensorBackend|KinectViewer|CalderaTests|CalderaHeavyTests)
+		SensorBackend|SensorViewer|CalderaTests|CalderaHeavyTests)
 			TARGETS+=("$1"); shift ;;
 		*) 
 			echo "Error: Unknown option or target: $1"
-			echo "Available targets: SensorBackend, KinectViewer, CalderaTests, CalderaHeavyTests"
+			echo "Available targets: SensorBackend, SensorViewer, CalderaTests, CalderaHeavyTests"
 			echo "Use -h for help"
 			exit 1 ;;
 	esac
@@ -132,6 +132,34 @@ if [ "${CALDERA_TRANSPORT_SOCKETS:-0}" = "1" ] || [ "${CALDERA_TRANSPORT_SOCKETS
 	EXTRA_CMAKE_FLAGS+=( -DCALDERA_TRANSPORT_SOCKETS=ON )
 else
 	EXTRA_CMAKE_FLAGS+=( -DCALDERA_TRANSPORT_SOCKETS=OFF )
+fi
+
+# Memory checking and sanitizer options
+if [ "${CALDERA_ENABLE_ASAN:-0}" = "1" ] || [ "${CALDERA_ENABLE_ASAN:-OFF}" = "ON" ]; then
+    echo "[build.sh] AddressSanitizer ENABLED (CALDERA_ENABLE_ASAN=ON)"
+    EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_ASAN=ON )
+else
+    EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_ASAN=OFF )
+fi
+
+if [ "${CALDERA_ENABLE_UBSAN:-0}" = "1" ] || [ "${CALDERA_ENABLE_UBSAN:-OFF}" = "ON" ]; then
+    echo "[build.sh] UndefinedBehaviorSanitizer ENABLED (CALDERA_ENABLE_UBSAN=ON)"
+    EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_UBSAN=ON )
+fi
+
+if [ "${CALDERA_ENABLE_TSAN:-0}" = "1" ] || [ "${CALDERA_ENABLE_TSAN:-OFF}" = "ON" ]; then
+    echo "[build.sh] ThreadSanitizer ENABLED (CALDERA_ENABLE_TSAN=ON)"
+    EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_TSAN=ON )
+fi
+
+if [ "${CALDERA_ENABLE_MSAN:-0}" = "1" ] || [ "${CALDERA_ENABLE_MSAN:-OFF}" = "ON" ]; then
+    echo "[build.sh] MemorySanitizer ENABLED (CALDERA_ENABLE_MSAN=ON)"
+    EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_MSAN=ON )
+fi
+
+if [ "${CALDERA_ENABLE_VALGRIND:-0}" = "1" ] || [ "${CALDERA_ENABLE_VALGRIND:-OFF}" = "ON" ]; then
+    echo "[build.sh] Valgrind memory checking ENABLED (CALDERA_ENABLE_VALGRIND=ON)"
+    EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_VALGRIND=ON )
 fi
 
 cmake -B $BUILD_DIR -S . -DCALDERA_BUILD_TESTS=ON -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake "${EXTRA_CMAKE_FLAGS[@]}"

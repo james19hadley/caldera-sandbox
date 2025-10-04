@@ -1,0 +1,149 @@
+{
+  "tests": 7,
+  "failures": 6,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2025-10-04T17:50:13Z",
+  "time": "20.783s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "ProcessBlackBox",
+      "tests": 7,
+      "failures": 6,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2025-10-04T17:50:13Z",
+      "time": "20.783s",
+      "testsuite": [
+        {
+          "name": "SensorBackendSharedMemoryBasic",
+          "file": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp",
+          "line": 55,
+          "status": "RUN",
+          "result": "SKIPPED",
+          "timestamp": "2025-10-04T17:50:13Z",
+          "time": "0.003s",
+          "classname": "ProcessBlackBox",
+          "skipped": [
+            {
+              "message": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp:62\nSensorBackend executable not found at .\/build\/SensorBackend; build it or set CALDERA_SENSOR_BACKEND_PATH\n"
+            }
+          ]
+        },
+        {
+          "name": "SensorBackendGracefulRestart",
+          "file": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp",
+          "line": 112,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2025-10-04T17:50:13Z",
+          "time": "6.027s",
+          "classname": "ProcessBlackBox",
+          "failures": [
+            {
+              "failure": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp:136\nFailed\nfailed to connect shm:\/caldera_proc_restart1\n",
+              "type": ""
+            },
+            {
+              "failure": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp:151\nExpected: (r1.first) > (5), actual: 0 vs 5\n",
+              "type": ""
+            },
+            {
+              "failure": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp:136\nFailed\nfailed to connect shm:\/caldera_proc_restart2\n",
+              "type": ""
+            },
+            {
+              "failure": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp:153\nExpected: (r2.first) > (5), actual: 0 vs 5\n",
+              "type": ""
+            }
+          ]
+        },
+        {
+          "name": "SensorBackendReaderReconnect",
+          "file": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp",
+          "line": 159,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2025-10-04T17:50:19Z",
+          "time": "3.012s",
+          "classname": "ProcessBlackBox",
+          "failures": [
+            {
+              "failure": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp:182\nValue of: client1.connectData(TestCalderaClient::ShmDataConfig{shmName, 640, 480, false, 3000})\n  Actual: false\nExpected: true\ninitial connect failed\n",
+              "type": ""
+            }
+          ]
+        },
+        {
+          "name": "SensorBackendSharedMemoryChecksumInterval",
+          "file": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp",
+          "line": 227,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2025-10-04T17:50:22Z",
+          "time": "2.002s",
+          "classname": "ProcessBlackBox",
+          "failures": [
+            {
+              "failure": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp:254\nExpected: (s.distinct_frames) > (10u), actual: 1 vs 10\n",
+              "type": ""
+            },
+            {
+              "failure": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp:255\nExpected: (s.checksum_present) > (0u), actual: 0 vs 0\n",
+              "type": ""
+            }
+          ]
+        },
+        {
+          "name": "SensorBackendAttachBeforeStart",
+          "file": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp",
+          "line": 268,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2025-10-04T17:50:24Z",
+          "time": "3.715s",
+          "classname": "ProcessBlackBox",
+          "failures": [
+            {
+              "failure": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp:307\nValue of: connected\n  Actual: false\nExpected: true\nFailed to connect SHM after backend start\n",
+              "type": ""
+            }
+          ]
+        },
+        {
+          "name": "SensorBackendPostStopStagnation",
+          "file": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp",
+          "line": 332,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2025-10-04T17:50:28Z",
+          "time": "3.015s",
+          "classname": "ProcessBlackBox",
+          "failures": [
+            {
+              "failure": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_process_shm_blackbox.cpp:353\nValue of: client.connectData(TestCalderaClient::ShmDataConfig{shmName, 640, 480, false, 3000})\n  Actual: false\nExpected: true\n",
+              "type": ""
+            }
+          ]
+        },
+        {
+          "name": "WorldFrameClientSharedMemoryBasic",
+          "file": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_worldframe_client_shm.cpp",
+          "line": 54,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2025-10-04T17:50:31Z",
+          "time": "3.006s",
+          "classname": "ProcessBlackBox",
+          "failures": [
+            {
+              "failure": "\/home\/ging\/prog\/caldera-sandbox\/backend\/tests\/integration\/test_worldframe_client_shm.cpp:94\nValue of: opened\n  Actual: false\nExpected: true\nSHM not created by child within timeout\n",
+              "type": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

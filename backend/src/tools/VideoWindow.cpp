@@ -213,14 +213,27 @@ bool VideoWindow::showColorFrame(const caldera::backend::common::RawColorFrame& 
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
     }
     
-    // Convert BGRX to RGB
+    // Convert color data to RGB format
     std::vector<uint8_t> rgb_data(frame.width * frame.height * 3);
-    const uint8_t* bgrx_data = frame.data.data();
+    const uint8_t* input_data = frame.data.data();
     
-    for (size_t i = 0; i < frame.width * frame.height; ++i) {
-        rgb_data[i * 3 + 0] = bgrx_data[i * 4 + 2]; // R = B from BGRX
-        rgb_data[i * 3 + 1] = bgrx_data[i * 4 + 1]; // G = G from BGRX  
-        rgb_data[i * 3 + 2] = bgrx_data[i * 4 + 0]; // B = R from BGRX
+    // Detect format based on data size: BGRX=4 bytes/pixel, RGB=3 bytes/pixel
+    size_t expected_bgrx_size = frame.width * frame.height * 4;
+    size_t expected_rgb_size = frame.width * frame.height * 3;
+    
+    if (frame.data.size() == expected_bgrx_size) {
+        // BGRX format (Kinect v2) - convert to RGB
+        for (size_t i = 0; i < frame.width * frame.height; ++i) {
+            rgb_data[i * 3 + 0] = input_data[i * 4 + 2]; // R = B from BGRX
+            rgb_data[i * 3 + 1] = input_data[i * 4 + 1]; // G = G from BGRX  
+            rgb_data[i * 3 + 2] = input_data[i * 4 + 0]; // B = R from BGRX
+        }
+    } else if (frame.data.size() == expected_rgb_size) {
+        // RGB format (Kinect v1) - copy directly
+        std::memcpy(rgb_data.data(), input_data, expected_rgb_size);
+    } else {
+        // Unknown format - fallback
+        std::fill(rgb_data.begin(), rgb_data.end(), 128); // Gray
     }
     
     // Upload to OpenGL texture
@@ -262,6 +275,13 @@ bool VideoWindow::shouldClose() const {
 
 void VideoWindow::pollEvents() {
     glfwPollEvents();
+}
+
+void VideoWindow::show() {
+    if (window_) {
+        // If texture not yet created, just make window visible so user sees it is alive
+        glfwShowWindow(window_);
+    }
 }
 
 } // namespace caldera::backend::tools

@@ -32,6 +32,7 @@ add_executable(CalderaTests
     # sensor
     sensor/test_sensor_kinectv2_device.cpp
     sensor/test_sensor_recording.cpp
+    sensor/test_sensor_kinectv1_device.cpp
     sensor/test_sensor_mock_negative.cpp
     # integration
     integration/test_synthetic_sensor_pass_through.cpp
@@ -44,6 +45,16 @@ add_executable(CalderaTests
     integration/test_pipeline_metrics.cpp
     integration/test_process_shm_blackbox.cpp
     integration/test_worldframe_client_shm.cpp
+    # memory leak tests
+    memory/test_memory_leaks.cpp
+    memory/test_hal_memory.cpp
+    memory/test_memory_hal_processing_integration.cpp
+    memory/test_memory_processing_transport_integration.cpp
+    memory/test_memory_full_pipeline_integration.cpp
+    memory/test_processing_memory.cpp
+    memory/test_memory_stress.cpp
+    memory/test_memory_extended_runtime.cpp
+    memory/test_memory_pressure.cpp
     # helpers (non-test utilities referenced by tests)
     helpers/TestLocalTransportClient.cpp
     helpers/TestCalderaClient.cpp
