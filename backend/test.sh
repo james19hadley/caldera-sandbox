@@ -19,7 +19,10 @@
 # Available test suites: LoggerBasic, LoggerLevelsFixture, PipelineBasic, 
 #                       ProcessingConversion, LoggerConcurrency, FrameId, SharedMemory,
 #                       SensorRecording, KinectV2_DeviceTest, SharedMemoryRealisticFPS,
-#                       SharedMemoryStats
+#                       SharedMemoryStats, MemoryLeakTest
+#
+# Available test categories: logger, pipeline, processing, shm, transport, sensor, 
+#                          integration, memory, performance
 
 set -euo pipefail
 
@@ -80,9 +83,9 @@ while [[ $# -gt 0 ]]; do
       RUN_ALL_TESTS=1; shift ;;
     --gtest_*)
       EXTRA_ARGS+=("$1"); shift ;;
-    logger|pipeline|processing|shm|transport|sensor|integration|performance)
+    logger|pipeline|processing|shm|transport|sensor|integration|memory|performance)
       CATEGORIES+=("$1"); shift ;;
-    LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|SensorRecording*|KinectV2_DeviceTest*|SharedMemoryRealisticFPS*|SharedMemoryStats*|*Stress*)
+    LoggerBasic*|LoggerLevelsFixture*|PipelineBasic*|ProcessingConversion*|LoggerConcurrency*|FrameId*|SharedMemory*|SensorRecording*|KinectV2_DeviceTest*|SharedMemoryRealisticFPS*|SharedMemoryStats*|MemoryLeakTest*|*Stress*)
       SPECIFIC_TESTS+=("$1"); shift ;;
     *)
       # Treat any remaining bare argument as a test suite/pattern (e.g. SyntheticSensorPipeline)
@@ -170,6 +173,7 @@ if [ ${#CATEGORIES[@]} -gt 0 ]; then
       transport) CAT_PATTERNS+=("Handshake*" "HandshakeStats*" "ClientHealth*");;
       sensor) CAT_PATTERNS+=("KinectV2_DeviceTest*" "SensorRecordingTest*");;
       integration) CAT_PATTERNS+=("SyntheticSensorPipeline*" "ProcessingScaleSemantics*");;
+      memory) CAT_PATTERNS+=("MemoryLeakTest*");;
       performance) RUN_HEAVY=1 ;; # heavy handled later
     esac
   done

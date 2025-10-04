@@ -134,12 +134,32 @@ else
 	EXTRA_CMAKE_FLAGS+=( -DCALDERA_TRANSPORT_SOCKETS=OFF )
 fi
 
-# Optional: enable AddressSanitizer (memory error detection)
+# Memory checking and sanitizer options
 if [ "${CALDERA_ENABLE_ASAN:-0}" = "1" ] || [ "${CALDERA_ENABLE_ASAN:-OFF}" = "ON" ]; then
     echo "[build.sh] AddressSanitizer ENABLED (CALDERA_ENABLE_ASAN=ON)"
     EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_ASAN=ON )
 else
     EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_ASAN=OFF )
+fi
+
+if [ "${CALDERA_ENABLE_UBSAN:-0}" = "1" ] || [ "${CALDERA_ENABLE_UBSAN:-OFF}" = "ON" ]; then
+    echo "[build.sh] UndefinedBehaviorSanitizer ENABLED (CALDERA_ENABLE_UBSAN=ON)"
+    EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_UBSAN=ON )
+fi
+
+if [ "${CALDERA_ENABLE_TSAN:-0}" = "1" ] || [ "${CALDERA_ENABLE_TSAN:-OFF}" = "ON" ]; then
+    echo "[build.sh] ThreadSanitizer ENABLED (CALDERA_ENABLE_TSAN=ON)"
+    EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_TSAN=ON )
+fi
+
+if [ "${CALDERA_ENABLE_MSAN:-0}" = "1" ] || [ "${CALDERA_ENABLE_MSAN:-OFF}" = "ON" ]; then
+    echo "[build.sh] MemorySanitizer ENABLED (CALDERA_ENABLE_MSAN=ON)"
+    EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_MSAN=ON )
+fi
+
+if [ "${CALDERA_ENABLE_VALGRIND:-0}" = "1" ] || [ "${CALDERA_ENABLE_VALGRIND:-OFF}" = "ON" ]; then
+    echo "[build.sh] Valgrind memory checking ENABLED (CALDERA_ENABLE_VALGRIND=ON)"
+    EXTRA_CMAKE_FLAGS+=( -DCALDERA_ENABLE_VALGRIND=ON )
 fi
 
 cmake -B $BUILD_DIR -S . -DCALDERA_BUILD_TESTS=ON -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake "${EXTRA_CMAKE_FLAGS[@]}"

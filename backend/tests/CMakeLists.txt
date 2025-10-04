@@ -45,6 +45,10 @@ add_executable(CalderaTests
     integration/test_pipeline_metrics.cpp
     integration/test_process_shm_blackbox.cpp
     integration/test_worldframe_client_shm.cpp
+    # memory leak tests
+    memory/test_memory_leaks.cpp
+    memory/test_hal_memory.cpp
+    memory/test_processing_memory.cpp
     # helpers (non-test utilities referenced by tests)
     helpers/TestLocalTransportClient.cpp
     helpers/TestCalderaClient.cpp

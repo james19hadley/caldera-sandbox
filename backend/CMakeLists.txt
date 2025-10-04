@@ -1,12 +1,46 @@
 cmake_minimum_required(VERSION 3.18)
 project(CalderaBackend)
 
-# Optional sanitizers for debugging (enable with -DCALDERA_ENABLE_ASAN=ON)
-option(CALDERA_ENABLE_ASAN "Enable AddressSanitizer for debugging" OFF)
+# Optional sanitizers for debugging and memory checking
+option(CALDERA_ENABLE_ASAN "Enable AddressSanitizer for memory error detection" OFF)
+option(CALDERA_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF) 
+option(CALDERA_ENABLE_TSAN "Enable ThreadSanitizer for data race detection" OFF)
+option(CALDERA_ENABLE_MSAN "Enable MemorySanitizer for uninitialized memory detection" OFF)
+
+# AddressSanitizer (detects buffer overflows, use-after-free, double-free, memory leaks)
 if (CALDERA_ENABLE_ASAN)
     message(STATUS "AddressSanitizer: ENABLED")
-    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
     add_link_options(-fsanitize=address)
+    # Enable leak detection by default with ASan
+    set(ENV{ASAN_OPTIONS} "detect_leaks=1:abort_on_error=1:check_initialization_order=1")
+endif()
+
+# UndefinedBehaviorSanitizer (detects undefined behavior like integer overflow, null pointer dereference)
+if (CALDERA_ENABLE_UBSAN)
+    message(STATUS "UndefinedBehaviorSanitizer: ENABLED")
+    add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=undefined)
+endif()
+
+# ThreadSanitizer (detects data races in multi-threaded code) - mutually exclusive with ASan
+if (CALDERA_ENABLE_TSAN)
+    if (CALDERA_ENABLE_ASAN)
+        message(FATAL_ERROR "ThreadSanitizer and AddressSanitizer are mutually exclusive")
+    endif()
+    message(STATUS "ThreadSanitizer: ENABLED") 
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=thread)
+endif()
+
+# MemorySanitizer (detects uninitialized memory reads) - requires special libc++
+if (CALDERA_ENABLE_MSAN)
+    if (CALDERA_ENABLE_ASAN OR CALDERA_ENABLE_TSAN)
+        message(FATAL_ERROR "MemorySanitizer is mutually exclusive with other sanitizers")
+    endif()
+    message(STATUS "MemorySanitizer: ENABLED")
+    add_compile_options(-fsanitize=memory -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=memory)
 endif()
 
 # --- Find Dependencies ---
@@ -184,6 +218,26 @@ target_link_libraries(KinectV1Ctl PRIVATE caldera_backend_core)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Valgrind support for memory leak detection
+option(CALDERA_ENABLE_VALGRIND "Enable Valgrind memory checking in tests" OFF)
+if (CALDERA_ENABLE_VALGRIND)
+    find_program(VALGRIND_EXECUTABLE valgrind)
+    if (VALGRIND_EXECUTABLE)
+        message(STATUS "Valgrind found: ${VALGRIND_EXECUTABLE}")
+        set(VALGRIND_OPTIONS 
+            --tool=memcheck
+            --leak-check=full
+            --show-leak-kinds=all  
+            --track-origins=yes
+            --error-exitcode=1
+            --suppressions=${CMAKE_CURRENT_SOURCE_DIR}/valgrind.supp
+        )
+    else()
+        message(WARNING "Valgrind not found, memory checking disabled")
+        set(CALDERA_ENABLE_VALGRIND OFF)
+    endif()
+endif()
 
 option(CALDERA_BUILD_TESTS "Build Caldera backend tests" ON)
 if (CALDERA_BUILD_TESTS)

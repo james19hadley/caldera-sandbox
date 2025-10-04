@@ -41,6 +41,14 @@ void SharedMemoryTransportServer::stop() {
         close(fd_);
         fd_ = -1;
     }
+    
+    // Critical: unlink shared memory segment to prevent leaks
+    if (!cfg_.shm_name.empty()) {
+        if (shm_unlink(cfg_.shm_name.c_str()) != 0 && errno != ENOENT) {
+            logger_->warn("shm_unlink failed for {}: {}", cfg_.shm_name, strerror(errno));
+        }
+    }
+    
     logger_->info("SharedMemoryTransportServer stopped");
 }
 
