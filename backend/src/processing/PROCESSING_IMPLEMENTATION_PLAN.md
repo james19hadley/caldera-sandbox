@@ -1,6 +1,6 @@
 # Processing Layer Implementation Working Plan (Assistant Draft)
 
-Last Updated: 2025-10-05 (post fastgauss + edge metric + strong kernel selection + perf bench)
+Last Updated: 2025-10-05 (post legacy removal – unified stage execution baseline)
 Owner: AI assistant (implementation companion)
 Scope: Concrete, incremental plan to evolve the current processing layer from basic depth-to-height conversion to a robust, multi-stage, validated, adaptive perception pipeline.
 
@@ -14,7 +14,7 @@ Scope: Concrete, incremental plan to evolve the current processing layer from ba
 - Support per-sensor isolation first; fusion is an explicit, pluggable stage (avoid premature interleaving)
 - Treat defective / unstable pixels as dynamic phenomena (process-time classification, not static calibration-only)
 
-## 2. Current Baseline (State Assessment)
+## 2. Current Baseline (State Assessment – Post Legacy Removal)
 | Component | Status | Notes |
 |-----------|--------|-------|
 | DepthCorrector | Basic placeholder | Uniform radial factor only, no per-pixel table load |
@@ -23,9 +23,9 @@ Scope: Concrete, incremental plan to evolve the current processing layer from ba
 | Spatial Filtering | Implemented (Phase 1 + alt kernels) | Separable [1 2 1] kernel, NaN-aware, alt kernels: wide5 + fastgauss (env selectable), adaptive gating in M4 |
 | Plane Validation | Implemented (world-space) | Zero-depth reject + min/max plane bounds (env fallback + profile override); image-space parity deferred |
 | Invalid Pixel Metrics | Active | Valid/invalid counts logged per frame (used in tests) |
-| ProcessingManager | Enhanced | Point cloud build, plane validation, temporal + optional spatial, fusion passthrough, stability metrics, adaptive mode, profile autoload |
+| ProcessingManager | Unified stage path | Legacy branch removed; stage list always active (lambda placeholders for build/spatial/fusion); metrics + adaptive temporal blend still post-loop |
 | Diagnostics | Instrumented | Stage timing + variance/stability metrics behind `CALDERA_PROCESSING_STABILITY_METRICS` |
-| Multi-Sensor Fusion | Phase 0 (scaffold) | `FusionAccumulator` passthrough; future min-z / confidence weighting pending |
+| Multi-Sensor Fusion | Phase 2 (confidence-weighted) | Min-z + confidence-weighted fusion implemented; metrics + fallbacks + duplicate layer test path |
 
 ## 3. Target Incremental Milestones
 
@@ -98,7 +98,7 @@ Deferred (M4-scoped) / intentionally omitted:
 FastGaussian & Edge Metric Note:
 FastGaussian kernel integration (select via `CALDERA_SPATIAL_KERNEL_ALT=fastgauss` and sigma via `CALDERA_FASTGAUSS_SIGMA`) plus edge preservation metric landed after M5 MVP; confidence formula unchanged but metrics can inform future weighting adjustments (e.g. penalize over-smoothed edges).
 
-### M5: Confidence Map (Derived Surface)
+### M5: Confidence Map (Derived Surface) – COMPLETE
 Goal: Emit per-pixel confidence (0..1 float) enabling downstream visualization, filtering, and fusion weighting.
 
 Conceptual Inputs:
@@ -159,26 +159,31 @@ Acceptance Criteria MVP (Met):
 * Stability monotonic trend confirmed in test.
 Remaining (Phase 2): external exposure, fusion weighting, optional per-pixel temporal variance.
 
-### M6: Multi-Sensor Fusion (Foundational Architecture)
-Goal: Allow injecting second sensor path (mock) and fusing.
-Precursor: `FusionAccumulator` scaffold introduced early to avoid refactors.
+### M6: Multi-Sensor Fusion (Foundational Architecture) – IN PROGRESS
+Goal: Combine multiple sensor (or synthetic) layers into a single stable height map using progressive strategies.
+
 Phase Breakdown & Status:
-1. Phase 0: Scaffold (`beginFrame`, `addLayer`, single-layer passthrough) — COMPLETED (earlier).
-2. Phase 1: Min-z multi-layer fusion (NaN-aware, per-layer offsets) — COMPLETED (implemented multi-layer storage + tests `test_fusion_min_z.cpp`).
-3. Phase 2: Confidence-weighted average (pending) — NEXT (requires weighting interface & confidence map per-layer ingestion; currently taking max confidence placeholder).
-4. Phase 3: Timeout & sensor dropout handling + metrics — Pending.
-5. Phase 4: Pluggable strategies (enum/strategy objects) — Pending.
+1. Phase 0: Scaffold (`beginFrame`, `addLayer`, single-layer passthrough) — COMPLETED.
+2. Phase 1: Min-z multi-layer fusion (NaN-aware, per-layer storage) — COMPLETED (`test_fusion_min_z.cpp`).
+3. Phase 2: Confidence-weighted average (weighted blend) — COMPLETED (per-pixel weights = clamped confidence; fallback to min-z on zero-sum; metrics + fallbacks; tests `test_fusion_weighted.cpp`, `test_fusion_zero_confidence.cpp`, `test_fusion_all_invalid.cpp`, `test_fusion_confidence_clamp.cpp`).
+4. Phase 3: Timeout & sensor dropout handling + dropout metrics — PENDING.
+5. Phase 4: Pluggable strategies (enum/strategy objects with strategy selection injection) — PENDING.
 
-Added Artifacts:
-* `test_fusion_min_z.cpp` validates min-z selection + NaN skip.
-* Updated `FusionAccumulator` with dynamic per-layer offsets (heights + optional confidence) and Phase 1 min-z logic.
-* Added fusion metrics (layerValidCounts, fusedValidCount, fusedValidRatio) + test `test_fusion_metrics.cpp`.
-* Added weighting interface placeholders in `FusionAccumulator::fuse` (weightsPerLayer / perPixelWeights) – currently ignored in Phase 1 (min-z only).
+Implemented Artifacts (Phase 2):
+* Extended `FusionAccumulator` with strategy field (0=min-z,1=confidence-weighted) and fallback counters (`fallbackMinZCount`, `fallbackEmptyCount`).
+* Confidence-weighted fuse path: per pixel compute sum r_i = confidence_i (optionally sensor global weight placeholder), normalize, accumulate weighted average; if sum==0 and any finite -> min-z fallback else empty fallback (0).
+* Output composite confidence (weighted mean when exported) via optional buffer path in `fuse` when `CALDERA_PROCESSING_EXPORT_CONFIDENCE`=1.
+* Periodic fusion stats logging controlled by `CALDERA_FUSION_LOG_EVERY` (logs strategy, fusedValidRatio, fallbacks).
+* Synthetic duplicate layer injection in `ProcessingManager` when `CALDERA_FUSION_DUP_LAYER=1` for exercising weighting logic (shift + per-layer adjustable confidences via `CALDERA_FUSION_DUP_LAYER_CONF`).
+* Metrics: per-layer valid counts, fused valid count, fused valid ratio, fallback counters, chosen strategy.
 
-Upcoming (short-term):
-* Fusion metrics: fusedValidRatio, per-layer valid counts, chosenStrategy enum.
-* Weighting interface: optional weights array + pre-normalization design.
-* Draft spec (confidence-weighted): weight_i = normalize(confidence_i * sensorWeight_i) with fallback to min-z on all-zero row.
+Remaining (short-term M6 roadmap):
+* Phase 3: Sensor dropout/timeout handling (last-seen frame id tracking, stale exclusion metrics)
+* Phase 4: Strategy abstraction (pluggable strategies via env `CALDERA_FUSION_STRATEGY`)
+* Global sensor weights parsing (`CALDERA_FUSION_SENSOR_WEIGHTS`)
+* Integration tests once fusion logic resides in concrete FusionStage
+
+Deferred (beyond M6): residual/outlier attenuation, spatially adaptive cross-sensor consistency metric, GPU vectorized fusion path.
 
 ### M7+: Advanced (Deferred)
 - Motion field estimation
@@ -255,14 +260,15 @@ Stability Delta Instrumentation (Planned M2 extension):
 | CALDERA_PROCESSING_PIPELINE | Declarative stage order (e.g. "temporal,spatial,confidence,fusion") | unset | Implemented (parser + minimal execution + when= gating) |
 | CALDERA_PIPELINE_STAGE_OPTS | Per-stage key=val overrides | unset | Deferred (will fold into per-stage params already parsed) |
 
-## 9. Immediate Next Actions (Refreshed Post FastGauss / Edge Metric / Strong Kernel)
-1. Stage orchestration Phase 1: parse `CALDERA_PROCESSING_PIPELINE`, apply temporal + spatial ordering with when= gating (always|adaptive|adaptiveStrong|never) and trace logs. (DONE)
-2. Confidence externalization: public accessor + optional export hook (log or diagnostic API). Defer shared memory until fusion weighting spec finalized.
-3. Fusion Phase 1 (min-z) implementation + tests; integrate with existing FusionAccumulator scaffold.
-4. Fusion Phase 2 design draft: confidence-weighted blending strategy (requires map exposure) – prepare spec before coding.
-5. Documentation sync: update README / design docs describing new env flags (fastgauss, strong kernel selection, edge metric) and performance benchmark usage.
-6. Optional: Add CSV export / multi-iteration mode to `SpatialKernelBenchmark` (env `CALDERA_BENCH_ITER`) for more stable timing distributions.
-7. Investigate per-pixel temporal variance (memory layout & incremental update cost model) – decide go/no-go for Confidence Phase 2.
+## 9. Immediate Next Actions (Refreshed Post Legacy Removal)
+1. Concrete BuildStage & FusionStage (move logic from manager body into stage objects)
+2. MetricsStage (port updateMetrics + confidence map; remove post-loop metrics call)
+3. AdaptiveControlStage (gating + strong mode decision + temporal scale flagging)
+4. SpatialStage emits sampling stats struct consumed by MetricsStage
+5. Parser ordering validation + required subset tests
+6. Fusion Phase 3: dropout handling (last-seen tracking, stale exclusion)
+7. Fusion Phase 4: strategy abstraction + sensor/global weights parsing
+8. Concurrency profiling & potential parallel stage execution
 
 ## 10. Confidence-Weighted Fusion Specification (Draft)
 Goal: Extend Fusion (Phase 2) to combine multiple sensor layers using per-pixel (or frame-level) confidence values, falling back gracefully when information is missing.
@@ -489,3 +495,6 @@ Stability Delta Instrumentation (Planned M2 extension):
 - 2025-10-05: Integrated FastGaussianBlur selectable kernel (env `CALDERA_SPATIAL_KERNEL_ALT=fastgauss`, sigma via `CALDERA_FASTGAUSS_SIGMA`), added edge preservation metric (`spatialEdgePreservationRatio`).
 - 2025-10-05: Added adaptive strong kernel selection env (`CALDERA_ADAPTIVE_STRONG_KERNEL`) supporting classic_double|wide5|fastgauss with tests.
 - 2025-10-05: Added performance benchmark `SpatialKernelBenchmark.BasicComparativeTiming` to light test target (timing + var/edge ratios).
+- 2025-10-05: Fusion Phase 1 (min-z) + metrics + tests (`test_fusion_min_z.cpp`, `test_fusion_metrics.cpp`).
+- 2025-10-05: Fusion Phase 2 (confidence-weighted) implementation + tests (`test_fusion_weighted.cpp`, `test_fusion_zero_confidence.cpp`, `test_fusion_all_invalid.cpp`, `test_fusion_confidence_clamp.cpp`); added fallback counters & strategy logging.
+- 2025-10-05: Introduced pipeline stage instantiation (BuildStage, TemporalStage, SpatialStage, FusionStage) — unified stage-driven execution active; legacy path removed.

@@ -13,6 +13,8 @@ add_executable(CalderaTests
     pipeline/test_pipeline_basic.cpp
     pipeline/test_pipeline_failures.cpp
     pipeline/test_pipeline_frame_id_monotonic.cpp
+    pipeline/test_stage_pipeline_basic.cpp
+    pipeline/test_pipeline_parser.cpp
     # processing
     processing/test_processing_conversion.cpp
     processing/test_processing_shm_negatives.cpp

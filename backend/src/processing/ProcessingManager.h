@@ -123,6 +123,18 @@ private:
                                           bool metricsEnabled,
                                           int sampleCount);
 
+    // Shared metrics/confidence aggregation (used by both legacy and stage execution paths)
+    void updateMetrics(const std::vector<float>& fusedHeights,
+                       uint32_t width,
+                       uint32_t height,
+                       const std::chrono::steady_clock::time_point& tBuildStart,
+                       const std::chrono::steady_clock::time_point& tBuildEnd,
+                       const std::chrono::steady_clock::time_point& tFuseStart,
+                       const std::chrono::steady_clock::time_point& tFuseEnd,
+                       const std::chrono::steady_clock::time_point& tFrameEnd,
+                       const SpatialApplyResult& spatialRes,
+                       bool adaptiveTemporalApplied);
+
     // Attempt to parse CALDERA_PIPELINE once (lazy executed in ctor). Purely informational until
     // stage execution refactor lands. If parsing fails we keep specs_ empty and mark fallback.
     void parsePipelineEnv();
@@ -173,18 +185,36 @@ private:
     // Stage-oriented architecture (M5 scaffolding): not yet driving execution.
     // Will be populated with concrete stage objects (build, plane_validate, temporal, etc.)
     // in subsequent steps without breaking existing processRawDepthFrame logic.
-    std::vector<std::unique_ptr<IProcessingStage>> stages_; // unused until M5 Step 2
+    std::vector<std::unique_ptr<IProcessingStage>> stages_; // populated from parsed pipeline specs (instantiated, not yet executed)
+    void rebuildPipelineStages(); // instantiate stage objects based on parsed specs
     AdaptiveState adaptiveState_; // shared state for future adaptive_control + spatial stages
     // Parsed pipeline specs (M5 Step 2). Not yet executed; retained for diagnostics/testing.
     std::vector<StageSpec> parsedPipelineSpecs_;
     bool pipelineSpecValid_ = false;
     std::string pipelineSpecError_;
+    // Experimental multi-layer fusion duplication (development/testing): if enabled creates a second synthetic layer
+    bool duplicateFusionLayer_ = false; // CALDERA_FUSION_DUP_LAYER=1
+    float duplicateFusionShift_ = 0.02f; // CALDERA_FUSION_DUP_LAYER_SHIFT
+    float duplicateFusionBaseConf_ = 0.9f; // CALDERA_FUSION_DUP_LAYER_CONF (base,dup)
+    float duplicateFusionDupConf_ = 0.5f;
+    bool profileLoaded_ = false; // true when a calibration profile successfully loaded (skip env plane overrides)
     // Thread-safety: Phase 0 design assumed single-sensor feed. Multi-sensor tests invoke
     // processRawDepthFrame concurrently from multiple SyntheticSensorDevice threads, which led
     // to data races (and a heap-use-after-free via FusionAccumulator using a pointer to a
     // stack-local vector from another thread). For now we serialize the entire processing
     // pipeline per frame with a coarse mutex. Future Phase (pipeline orchestration) can
     // introduce finer-grained stage isolation or per-sensor instances.
+    // Persistent reusable buffers (memory stability)
+    std::vector<float> heightMapBuffer_;
+    std::vector<uint8_t> validityBuffer_;
+    std::vector<float> layerHeightsBuffer_;
+    std::vector<float> layerConfidenceBuffer_;
+    std::vector<float> fusedHeightsBuffer_;
+    std::vector<float> fusedConfidenceBuffer_;
+    InternalPointCloud reusableCloudIn_;
+    InternalPointCloud reusableCloudFiltered_;
+    // Track original invalid pixels (pre zero-fill) for counting & confidence zeroing
+    std::vector<uint8_t> originalInvalidMask_;
     mutable std::mutex processMutex_;
 };
 

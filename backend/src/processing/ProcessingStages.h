@@ -37,12 +37,17 @@ struct FrameContext {
     std::vector<float>& height;                 // world-space height buffer (mutable)
     std::vector<uint8_t>& validityMask;         // 1=valid, 0=invalid
     std::vector<float>* confidence;             // optional confidence map (nullptr if disabled)
-    ProcessingManagerStabilityMetricsOpaque& metrics; // opaque metrics reference
+    void* metrics; // opaque metrics pointer (cast by owner if needed)
     AdaptiveState& adaptive;                    // adaptive gating & historical state
     const TransformParameters& transform;       // calibration / plane parameters
     uint32_t width;                             // width in pixels
     uint32_t heightPx;                          // height in pixels
     uint64_t frameId;                           // sequential frame id
+    // Migration support additions (Stage Exec Phase):
+    const void* rawDepthFrame = nullptr;        // opaque pointer to RawDepthFrame (avoid include)
+    void* internalCloud = nullptr;              // pointer to InternalPointCloud (avoid include)
+    bool spatialApplied = false;                // whether spatial filter executed this frame
+    bool fusionCompleted = false;               // whether fusion stage finished
 };
 
 class IProcessingStage {
