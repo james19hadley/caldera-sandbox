@@ -75,21 +75,40 @@ ProcessingManager::ProcessingManager(std::shared_ptr<spdlog::logger> orchestrato
     // Adaptive temporal scale (optional) >1 means blend with previous filtered map when instability
     if(const char* e=std::getenv("CALDERA_ADAPTIVE_TEMPORAL_SCALE")) { try { float v=std::stof(e); if(v>1.0f && v<10.0f) adaptiveTemporalScale_ = v; } catch(...){} }
 
-    // Confidence map env parsing (M5)
+    // Confidence map env parsing (M5) with one-time / on-change logging for weights
     confidenceEnabled_ = [](){ if(const char* e=std::getenv("CALDERA_ENABLE_CONFIDENCE_MAP")) return std::atoi(e)==1; return false; }();
-    if(const char* w=std::getenv("CALDERA_CONFIDENCE_WEIGHTS")) {
-        // format: wS,wR,wT
-        try {
-            std::string s(w); size_t p1=s.find(','); size_t p2 = p1==std::string::npos?std::string::npos:s.find(',', p1+1);
-            if(p1!=std::string::npos && p2!=std::string::npos) {
-                float ws = std::stof(s.substr(0,p1));
-                float wr = std::stof(s.substr(p1+1, p2-(p1+1)));
-                float wt = std::stof(s.substr(p2+1));
-                if (ws>0 && wr>=0 && wt>=0) {
-                    float sum = ws+wr+wt; if(sum>0) { confWeightS_=ws; confWeightR_=wr; confWeightT_=wt; }
+    {
+        const char* w = std::getenv("CALDERA_CONFIDENCE_WEIGHTS");
+        static std::string lastWeightsSeen; // cached raw string
+        static bool loggedInvalidOnce = false;
+        if (w && *w) {
+            std::string cur(w);
+            if (cur != lastWeightsSeen) {
+                bool parsed = false;
+                try {
+                    // format: wS,wR,wT
+                    size_t p1 = cur.find(',');
+                    size_t p2 = p1==std::string::npos?std::string::npos:cur.find(',', p1+1);
+                    if (p1!=std::string::npos && p2!=std::string::npos) {
+                        float ws = std::stof(cur.substr(0,p1));
+                        float wr = std::stof(cur.substr(p1+1, p2-(p1+1)));
+                        float wt = std::stof(cur.substr(p2+1));
+                        if (ws>0 && wr>=0 && wt>=0) {
+                            float sum = ws+wr+wt; if (sum>0) { confWeightS_=ws; confWeightR_=wr; confWeightT_=wt; parsed = true; }
+                        }
+                    }
+                } catch(...) { parsed = false; }
+                if (parsed) {
+                    if (orch_logger_) orch_logger_->info("Applied CALDERA_CONFIDENCE_WEIGHTS '{}' (S={:.3f} R={:.3f} T={:.3f})", cur, confWeightS_, confWeightR_, confWeightT_);
+                } else {
+                    if (orch_logger_ && !loggedInvalidOnce) {
+                        orch_logger_->warn("Invalid CALDERA_CONFIDENCE_WEIGHTS '{}' , using defaults", cur);
+                        loggedInvalidOnce = true;
+                    }
                 }
+                lastWeightsSeen = cur;
             }
-        } catch(...) { if(orch_logger_) orch_logger_->warn("Invalid CALDERA_CONFIDENCE_WEIGHTS '{}', using defaults", w); }
+        }
     }
     if(const char* lo=std::getenv("CALDERA_CONFIDENCE_LOW")) { try { float v=std::stof(lo); if(v>=0 && v<=1) confLowThresh_=v; } catch(...){} }
     if(const char* hi=std::getenv("CALDERA_CONFIDENCE_HIGH")) { try { float v=std::stof(hi); if(v>=0 && v<=1) confHighThresh_=v; } catch(...){} }
@@ -115,6 +134,12 @@ ProcessingManager::ProcessingManager(std::shared_ptr<spdlog::logger> orchestrato
 void ProcessingManager::setWorldFrameCallback(WorldFrameCallback cb) { callback_ = std::move(cb); }
 
 void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
+    // Phase 0 concurrency guard: multi-sensor tests can call this concurrently from different
+    // SyntheticSensorDevice threads. The current implementation reuses internal member buffers
+    // (fusion accumulator, prevFilteredHeight_, metrics state) and passes stack-owned temporary
+    // height buffers into fusion layers by pointer, which is not thread-safe. A coarse mutex
+    // ensures only one frame processes at a time until stage refactor introduces safe parallelism.
+    std::lock_guard<std::mutex> lock(processMutex_);
     auto tFrameStart = std::chrono::steady_clock::now();
     if ((frameCounter_ % 60) == 0) {
         orch_logger_->info("Processing depth frame sensor={} w={} h={} frameCounter={}", raw.sensorId, raw.width, raw.height, frameCounter_);
@@ -141,7 +166,13 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
     }
 
     // Optional spatial filter (M2) controlled by env CALDERA_ENABLE_SPATIAL_FILTER=1
-    static int baseSpatial = [](){ if(const char* e=std::getenv("CALDERA_ENABLE_SPATIAL_FILTER")) return std::atoi(e); return 0; }();
+    // NOTE: Previously this was parsed once into a static (baseSpatial). That caused later tests
+    // in the same process (full suite run) to be unable to toggle the spatial filter dynamically
+    // between test cases by setting/unsetting the env var. This broke the wide5 kernel tests which
+    // rely on forcing deterministic single-pass behavior (disabling adaptive escalation) via envs
+    // set just before constructing a new ProcessingManager. We now read the env each frame so
+    // per-test env overrides take effect even after prior tests have run.
+    int baseSpatial = 0; if(const char* e=std::getenv("CALDERA_ENABLE_SPATIAL_FILTER")) baseSpatial = std::atoi(e);
     // Kernel selection (extended): classic(default), wide5 (alt classic impl), fastgauss (FastGaussianBlur)
     struct SpatialKernelBundle {
         std::unique_ptr<SpatialFilter> classic;
@@ -167,7 +198,9 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
     // Sampling: capture a subset variance before spatial if metrics enabled
     float preSpatialVar = 0.0f; float postSpatialVar = 0.0f; bool sampled=false;
     float preEdgeEnergy = 0.0f; float postEdgeEnergy = 0.0f; // sum of local gradient magnitudes over samples
-    static int sampleCount = [](){ if(const char* e=std::getenv("CALDERA_SPATIAL_SAMPLE_COUNT")) { int v=std::atoi(e); return v>0? v:1024; } return 1024; }();
+    // Likewise make sampling count dynamic per frame (was static). Ensures tests can reduce sample
+    // size deterministically without being affected by earlier test configuration.
+    int sampleCount = 1024; if(const char* e=std::getenv("CALDERA_SPATIAL_SAMPLE_COUNT")) { int v=std::atoi(e); if(v>0) sampleCount = v; }
     std::vector<size_t> sampleIdx;
     if (metricsEnabled_ && sampleCount>0 && (int)heightMap.size() > sampleCount) {
         // Deterministic pseudo-random selection using linear congruential stepping

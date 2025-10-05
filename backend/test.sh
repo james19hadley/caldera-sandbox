@@ -188,7 +188,10 @@ fi
 if [ $MEMORY_ASAN -eq 1 ]; then
   echo -e "${GREEN}Building with AddressSanitizer and running memory tests...${RESET}"
   export ASAN_OPTIONS="abort_on_error=1:halt_on_error=1:check_initialization_order=1:detect_leaks=1"
-  (cd "$SCRIPT_DIR" && ./build.sh -s asan)
+  # Enable ASAN via existing build flags (build.sh expects CALDERA_ENABLE_ASAN env var)
+  export CALDERA_ENABLE_ASAN=ON
+  # Prefer Debug for better symbol resolution when investigating memory; fall back to Release if desired
+  (cd "$SCRIPT_DIR" && CALDERA_ENABLE_ASAN=ON ./build.sh -i -d CalderaTests)
   # Update test binary path after rebuild
   if [ -f "${BUILD_DIR}/tests/CalderaTests" ]; then
     TEST_BIN="${BUILD_DIR}/tests/CalderaTests"

@@ -39,7 +39,23 @@ void FastGaussianBlur::apply(std::vector<float>& data, int width, int height) {
     int boxes[3];
     std_to_box(boxes, sigma_, 3);
     
-    // Perform box blur passes using reference implementation
+    // Clamp radii for very small images to avoid overlap in vertical pass loops
+    // The Ivan Kutskir box blur formulation assumes r < min(w,h)/2; when this is violated
+    // (e.g. tiny synthetic test frames) the vertical pass write loops overlap and can
+    // write one row past the buffer (observed ASAN heap-buffer-overflow). We clamp here
+    // rather than modifying inner loops to preserve algorithmic structure.
+    int maxR = static_cast<int>((std::min(width, height) - 1) / 2); // ensure at least one untouched band
+    if (maxR < 0) maxR = 0;
+    for (int k = 0; k < 3; ++k) {
+        if (boxes[k] > maxR) boxes[k] = maxR;
+    }
+
+    // If all radii collapse to 0 no blur effect is needed.
+    if (boxes[0] == 0 && boxes[1] == 0 && boxes[2] == 0) {
+        return;
+    }
+
+    // Perform box blur passes using reference implementation (note alternating in/out)
     box_blur(in, out, width, height, boxes[0]);
     box_blur(out, in, width, height, boxes[1]);
     box_blur(in, out, width, height, boxes[2]);

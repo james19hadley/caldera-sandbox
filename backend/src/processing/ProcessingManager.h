@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <vector>
+#include <mutex>
 
 #include "common/DataTypes.h"
 #include "processing/IHeightMapFilter.h"
@@ -146,6 +147,13 @@ private:
     // in subsequent steps without breaking existing processRawDepthFrame logic.
     std::vector<std::unique_ptr<IProcessingStage>> stages_; // unused until M5 Step 2
     AdaptiveState adaptiveState_; // shared state for future adaptive_control + spatial stages
+    // Thread-safety: Phase 0 design assumed single-sensor feed. Multi-sensor tests invoke
+    // processRawDepthFrame concurrently from multiple SyntheticSensorDevice threads, which led
+    // to data races (and a heap-use-after-free via FusionAccumulator using a pointer to a
+    // stack-local vector from another thread). For now we serialize the entire processing
+    // pipeline per frame with a coarse mutex. Future Phase (pipeline orchestration) can
+    // introduce finer-grained stage isolation or per-sensor instances.
+    mutable std::mutex processMutex_;
 };
 
 } // namespace caldera::backend::processing

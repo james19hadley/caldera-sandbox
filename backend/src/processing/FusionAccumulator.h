@@ -9,8 +9,9 @@ namespace caldera::backend::processing {
 
 struct FusionInputLayer {
     std::string sensorId;            // logical sensor id
-    const float* heights = nullptr;  // height map pointer (size = width*height)
-    const float* confidence = nullptr; // optional (nullable until confidence map implemented)
+    // Raw pointers kept for legacy path; internal copy now taken on addLayer to avoid lifetime issues.
+    const float* heights = nullptr;  // external height map pointer (size = width*height)
+    const float* confidence = nullptr; // external confidence pointer
     int width = 0;
     int height = 0;
 };
@@ -29,11 +30,29 @@ public:
         width_ = width;
         height_ = height;
         layers_.clear();
+        // Reuse internal storage buffers sized for current frame
+        size_t total = static_cast<size_t>(width_) * static_cast<size_t>(height_);
+        if (heightsStorage_.size() != total) heightsStorage_.assign(total, 0.0f);
+        if (confidenceStorage_.size() != total) confidenceStorage_.assign(total, 1.0f);
     }
 
     void addLayer(const FusionInputLayer& layer) {
         if (layer.heights && layer.width == width_ && layer.height == height_) {
-            layers_.push_back(layer);
+            // Copy heights (and confidence if provided) into owned contiguous storage.
+            size_t total = static_cast<size_t>(width_) * static_cast<size_t>(height_);
+            // For now only support one layer copy; multi-layer Phase 1 will segment storage.
+            // Store offsets for each layer.
+            LayerEntry entry;
+            entry.sensorId = layer.sensorId;
+            entry.offset = 0; // single layer
+            if (heightsStorage_.size() < total) heightsStorage_.resize(total);
+            std::copy(layer.heights, layer.heights + total, heightsStorage_.data());
+            if (layer.confidence) {
+                if (confidenceStorage_.size() < total) confidenceStorage_.resize(total);
+                std::copy(layer.confidence, layer.confidence + total, confidenceStorage_.data());
+                entry.hasConfidence = true;
+            }
+            layers_.push_back(entry);
         }
         // else ignore (mismatch); future: collect stats / warnings
     }
@@ -52,11 +71,16 @@ public:
             return;
         }
         if (layers_.size() == 1) {
-            const FusionInputLayer& L = layers_[0];
-            std::copy(L.heights, L.heights + total, outHeightMap.data());
+            const LayerEntry& L = layers_[0];
+            const float* hSrc = heightsStorage_.data() + L.offset;
+            std::copy(hSrc, hSrc + total, outHeightMap.data());
             if (outConfidence) {
-                if (L.confidence) std::copy(L.confidence, L.confidence + total, outConfidence->data());
-                else std::fill(outConfidence->begin(), outConfidence->end(), 1.0f);
+                if (L.hasConfidence) {
+                    const float* cSrc = confidenceStorage_.data() + L.offset;
+                    std::copy(cSrc, cSrc + total, outConfidence->data());
+                } else {
+                    std::fill(outConfidence->begin(), outConfidence->end(), 1.0f);
+                }
             }
             return;
         }
@@ -65,8 +89,8 @@ public:
         for (size_t idx = 0; idx < total; ++idx) {
             float chosen = std::numeric_limits<float>::infinity();
             for (const auto& L : layers_) {
-                float v = L.heights[idx];
-                // Treat zero baseline vs actual zero height the same for now; future: need NaN semantics
+                const float* hSrc = heightsStorage_.data() + L.offset;
+                float v = hSrc[idx];
                 if (v < chosen) chosen = v;
             }
             outHeightMap[idx] = (chosen == std::numeric_limits<float>::infinity()) ? 0.0f : chosen;
@@ -81,7 +105,14 @@ private:
     uint64_t frameId_ = 0;
     int width_ = 0;
     int height_ = 0;
-    std::vector<FusionInputLayer> layers_;
+    struct LayerEntry {
+        std::string sensorId;
+        size_t offset = 0; // offset into storage buffers
+        bool hasConfidence = false;
+    };
+    std::vector<LayerEntry> layers_;
+    std::vector<float> heightsStorage_;
+    std::vector<float> confidenceStorage_;
 };
 
 } // namespace caldera::backend::processing

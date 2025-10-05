@@ -13,6 +13,7 @@
 
 #include "IntegrationHarness.h"
 #include "helpers/TestCalderaClient.h"
+#include "helpers/DeterministicEnvGuard.h"
 #include "common/Checksum.h"
 #include "common/Logger.h"
 
@@ -43,6 +44,9 @@ double p95(std::vector<double> v) {
 
 TEST(TransportLatency, SingleSensorLatencyP95WithinBudget) {
     using clock = std::chrono::steady_clock;
+
+    // Minimize processing overhead: disable spatial + adaptive features for stable latency metrics
+    auto guard = caldera::backend::tests::EnvVarGuard::disableSpatialAndAdaptive();
 
     // Rely on global test logger initialization strategy (other tests may have set level).
     caldera::backend::tests::IntegrationHarness harness;

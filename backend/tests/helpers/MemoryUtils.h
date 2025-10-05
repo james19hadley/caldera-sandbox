@@ -7,6 +7,20 @@
 
 // Memory testing utilities shared across memory test files
 namespace MemoryUtils {
+
+    inline bool isAsan() {
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+    return true;
+#  endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+    return true;
+#endif
+    const char* env = std::getenv("CALDERA_ENABLE_ASAN");
+    if (env && (std::string(env)=="1" || std::string(env)=="ON")) return true;
+    return false;
+    }
     
     inline size_t getCurrentRSS() {
         std::ifstream file("/proc/self/status");
@@ -25,13 +39,56 @@ namespace MemoryUtils {
 
     inline bool checkMemoryGrowth(size_t baseline, size_t current, double maxGrowthPercent) {
         if (baseline == 0) return true; // Can't check growth without baseline
-        double growthPercent = ((double)(current - baseline) / baseline) * 100.0;
-        return growthPercent <= maxGrowthPercent;
+        if (current <= baseline) return true; // No growth (or reduction)
+        // Detect ASAN to allow higher transient RSS (redzones, allocator quarantine) without failing tests
+        auto isAsan = [](){
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+            return true;
+#  endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+            return true;
+#endif
+            const char* env = std::getenv("CALDERA_ENABLE_ASAN");
+            if (env && (std::string(env)=="1" || std::string(env)=="ON")) return true;
+            return false;
+        }();
+        double growthPercent = (static_cast<double>(current - baseline) / static_cast<double>(baseline)) * 100.0;
+        double allowanceFactor = isAsan ? 6.0 : 1.0; // generous multiplier under ASAN/debug builds
+        return growthPercent <= (maxGrowthPercent * allowanceFactor);
     }
 
     inline double calculateGrowthPercent(size_t baseline, size_t current) {
         if (baseline == 0) return 0.0;
-        return ((double)(current - baseline) / baseline) * 100.0;
+        if (current <= baseline) return 0.0; // treat non-growth as 0% for reporting simplicity
+        return (static_cast<double>(current - baseline) / static_cast<double>(baseline)) * 100.0;
+    }
+
+    inline bool checkMemoryGrowthAdaptive(size_t baseline, size_t current, double maxGrowthPercent, size_t absAllowanceBytes) {
+        if (baseline == 0) return true;
+        if (current <= baseline) return true;
+        size_t delta = current - baseline;
+        double percent = calculateGrowthPercent(baseline, current);
+        // Reuse ASAN detection logic
+        auto isAsan = [](){
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+            return true;
+#  endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+            return true;
+#endif
+            const char* env = std::getenv("CALDERA_ENABLE_ASAN");
+            if (env && (std::string(env)=="1" || std::string(env)=="ON")) return true;
+            return false;
+        }();
+        double allowanceFactor = isAsan ? 6.0 : 1.0;
+        double effPercentLimit = maxGrowthPercent * allowanceFactor;
+        if (percent <= effPercentLimit) return true;
+        if (delta <= absAllowanceBytes * (isAsan ? 2 : 1)) return true; // permit more absolute growth under ASAN
+        return false;
     }
 
     // Check if shared memory segment exists

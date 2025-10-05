@@ -14,6 +14,9 @@ static float runOnce(const std::vector<uint16_t>& depths, const char* kernelAlt)
     setenv("CALDERA_PROCESSING_STABILITY_METRICS","1",1);
     setenv("CALDERA_ENABLE_SPATIAL_FILTER","1",1);
     setenv("CALDERA_SPATIAL_SAMPLE_COUNT","128",1); // ensure sampling (< total pixels)
+    // Force deterministic single-pass behavior: disable adaptive toggling & strong escalation
+    setenv("CALDERA_ADAPTIVE_SPATIAL_ENABLED","0",1);
+    setenv("CALDERA_ADAPTIVE_STRONG_KERNEL","0",1);
     if(kernelAlt) setenv("CALDERA_SPATIAL_KERNEL_ALT",kernelAlt,1); else unsetenv("CALDERA_SPATIAL_KERNEL_ALT");
 
     auto &loggerSingleton = caldera::backend::common::Logger::instance();
@@ -27,6 +30,8 @@ static float runOnce(const std::vector<uint16_t>& depths, const char* kernelAlt)
     unsetenv("CALDERA_ENABLE_SPATIAL_FILTER");
     unsetenv("CALDERA_SPATIAL_SAMPLE_COUNT");
     unsetenv("CALDERA_SPATIAL_KERNEL_ALT");
+    unsetenv("CALDERA_ADAPTIVE_SPATIAL_ENABLED");
+    unsetenv("CALDERA_ADAPTIVE_STRONG_KERNEL");
     return m.spatialVarianceRatio;
 }
 

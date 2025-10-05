@@ -1,0 +1,106 @@
+--- Incremental build: using existing build (no clean) ---
+--- Vendored libfreenect already built ---
+--- Configuring project (Debug build) ---
+[build.sh] AddressSanitizer ENABLED (CALDERA_ENABLE_ASAN=ON)
+-- Running vcpkg install
+Detecting compiler hash for triplet x64-linux...
+Compiler found: /usr/bin/c++
+The following packages are already installed:
+  * egl-registry:x64-linux@2024-01-25
+  * fmt:x64-linux@12.0.0
+  * glfw3:x64-linux@3.4#1
+    gtest:x64-linux@1.17.0#1
+    libfreenect2[core,opengl]:x64-linux@0.2.1#2
+    libjpeg-turbo:x64-linux@3.1.2
+    libusb[core,udev]:x64-linux@1.0.29#1
+    libva:x64-linux@2.20.0
+  * opengl:x64-linux@2022-12-04#3
+  * opengl-registry:x64-linux@2024-02-10#1
+    spdlog:x64-linux@1.15.3
+  * vcpkg-cmake:x64-linux@2024-04-23
+  * vcpkg-cmake-config:x64-linux@2024-05-23
+  * vcpkg-cmake-get-vars:x64-linux@2025-05-29
+  * vcpkg-make:x64-linux@2025-09-29
+  * vcpkg-tool-meson:x64-linux@1.9.0#1
+The package gtest is compatible with built-in CMake targets:
+
+    enable_testing()
+    
+    find_package(GTest CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE GTest::gtest GTest::gtest_main GTest::gmock GTest::gmock_main)
+    
+    add_test(AllTestsInMain main)
+
+libusb provides pkg-config modules:
+
+  # C API for USB device access from Linux, Mac OS X, Windows, OpenBSD/NetBSD and Solaris userspace
+  libusb-1.0
+
+libjpeg-turbo is compatible with built-in implementation-agnostic CMake targets:
+
+    find_package(JPEG REQUIRED)
+    target_link_libraries(main PRIVATE JPEG::JPEG)
+
+libjpeg-turbo provides CMake targets for the TurboJPEG C API:
+
+    find_package(libjpeg-turbo CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE $<IF:$<TARGET_EXISTS:libjpeg-turbo::turbojpeg>,libjpeg-turbo::turbojpeg,libjpeg-turbo::turbojpeg-static>)
+
+libfreenect2 provides pkg-config modules:
+
+  # Driver for the Kinect v2 (aka K4W) 
+  freenect2
+
+libva provides pkg-config modules:
+
+  # Userspace Video Acceleration (VA) DRM interface
+  libva-drm
+
+  # Userspace Video Acceleration (VA) core interface
+  libva
+
+The package spdlog provides CMake targets:
+
+    find_package(spdlog CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE spdlog::spdlog)
+
+    # Or use the header-only version
+    find_package(spdlog CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE spdlog::spdlog_header_only)
+
+All requested installations completed successfully in: 202 us
+-- Running vcpkg install - done
+-- AddressSanitizer: ENABLED
+-- Socket transport: DISABLED (CALDERA_TRANSPORT_SOCKETS=OFF)
+-- Kinect v1 support: ENABLED
+-- libfreenect(v1) include: /home/ging/prog/caldera-sandbox/vendor/libfreenect/include
+-- libfreenect(v1) library: /home/ging/prog/caldera-sandbox/vendor/libfreenect/build/lib/libfreenect.so
+-- Configuring done (0.9s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/ging/prog/caldera-sandbox/backend/build
+--- Building all targets (using 16 cores) ---
+[ 19%] Built target caldera_backend_core
+[ 21%] Built target CalibrationTool
+[ 23%] Built target KinectV1Ctl
+[ 25%] Built target SensorBackend
+[ 30%] Built target DataAnalyzer
+[ 35%] Built target SensorViewer
+[ 42%] Built target CalderaHeavyTests
+[ 43%] Building CXX object tests/CMakeFiles/CalderaTests.dir/memory/test_memory_stress.cpp.o
+In file included from /home/ging/prog/caldera-sandbox/backend/build/vcpkg_installed/x64-linux/include/gtest/gtest-printers.h:122,
+                 from /home/ging/prog/caldera-sandbox/backend/build/vcpkg_installed/x64-linux/include/gtest/gtest-matchers.h:49,
+                 from /home/ging/prog/caldera-sandbox/backend/build/vcpkg_installed/x64-linux/include/gtest/internal/gtest-death-test-internal.h:47,
+                 from /home/ging/prog/caldera-sandbox/backend/build/vcpkg_installed/x64-linux/include/gtest/gtest-death-test.h:43,
+                 from /home/ging/prog/caldera-sandbox/backend/build/vcpkg_installed/x64-linux/include/gtest/gtest.h:64,
+                 from /home/ging/prog/caldera-sandbox/backend/tests/memory/test_memory_stress.cpp:5:
+/home/ging/prog/caldera-sandbox/backend/tests/memory/test_memory_stress.cpp: In member function ‘virtual void MemoryStressTest_MultiConsumerMemoryScaling_Test::TestBody()’:
+/home/ging/prog/caldera-sandbox/backend/tests/memory/test_memory_stress.cpp:257:55: error: too few arguments to function ‘bool MemoryUtils::checkMemoryGrowthAdaptive(size_t, size_t, double, size_t)’
+  257 |     EXPECT_TRUE(MemoryUtils::checkMemoryGrowthAdaptive(warm_memory, final_memory, absoluteAllowance))
+      |                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /home/ging/prog/caldera-sandbox/backend/tests/memory/test_memory_stress.cpp:15:
+/home/ging/prog/caldera-sandbox/backend/tests/helpers/MemoryUtils.h:68:17: note: declared here
+   68 |     inline bool checkMemoryGrowthAdaptive(size_t baseline, size_t current, double maxGrowthPercent, size_t absAllowanceBytes) {
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~
+make[2]: *** [tests/CMakeFiles/CalderaTests.dir/build.make:933: tests/CMakeFiles/CalderaTests.dir/memory/test_memory_stress.cpp.o] Error 1
+make[1]: *** [CMakeFiles/Makefile2:1243: tests/CMakeFiles/CalderaTests.dir/all] Error 2
+make: *** [Makefile:101: all] Error 2

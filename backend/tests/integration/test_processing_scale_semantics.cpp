@@ -5,6 +5,7 @@
 
 #include "IntegrationHarness.h"
 #include "helpers/TestCalderaClient.h"
+#include "helpers/DeterministicEnvGuard.h"
 
 using namespace std::chrono_literals;
 using caldera::backend::tests::IntegrationHarness;
@@ -28,6 +29,8 @@ static std::optional<TestCalderaClient::FrameView> waitFrame(TestCalderaClient& 
 }
 
 static void runScaleCase(float scale) {
+    // Disable spatial filter & adaptive logic for precise scaling verification
+    auto guard = caldera::backend::tests::EnvVarGuard::disableSpatialAndAdaptive();
     IntegrationHarness harness;
     SyntheticSensorDevice::Config sc; sc.width=8; sc.height=8; sc.fps=40.0; sc.pattern=SyntheticSensorDevice::Pattern::RAMP; sc.sensorId="ScaleSynth";
     harness.addSyntheticSensor(sc);

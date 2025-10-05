@@ -3,6 +3,7 @@
 #include <chrono>
 #include <thread>
 #include <unordered_map>
+#include "helpers/DeterministicEnvGuard.h"
 
 #include "IntegrationHarness.h"
 #include "helpers/TestCalderaClient.h"
@@ -24,6 +25,8 @@ static void regenerateRamp(int w, int h, std::vector<uint16_t>& out) {
 static uint32_t crcFloats(const std::vector<float>& data) { return crc32(data); }
 
 TEST(SyntheticSensorPipeline, SingleSensorPassThroughRamp) {
+    // Ensure deterministic raw scaling: disable spatial & adaptive features for this test
+    auto guard = caldera::backend::tests::EnvVarGuard::disableSpatialAndAdaptive();
     IntegrationHarness harness;
     SyntheticSensorDevice::Config sc; sc.width=16; sc.height=16; sc.fps=30.0; sc.pattern=SyntheticSensorDevice::Pattern::RAMP; sc.sensorId="SynthA";
     harness.addSyntheticSensor(sc);
