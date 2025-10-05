@@ -575,6 +575,19 @@ std::string SensorCalibration::serializeProfile(const SensorCalibrationProfile& 
     json << "    \"maxDistanceToPlane\": " << cal.maxDistanceToPlane << ",\n";
     json << "    \"planeFitRSquared\": " << cal.planeFitRSquared << ",\n";
     json << "    \"isValidCalibration\": " << (cal.isValidCalibration ? "true" : "false") << "\n";
+    json << "  },\n";
+    // Serialize processing bounds planes
+    json << "  \"minValidPlane\": {\n";
+    json << "    \"a\": " << profile.minValidPlane.a << ",\n";
+    json << "    \"b\": " << profile.minValidPlane.b << ",\n";
+    json << "    \"c\": " << profile.minValidPlane.c << ",\n";
+    json << "    \"d\": " << profile.minValidPlane.d << "\n";
+    json << "  },\n";
+    json << "  \"maxValidPlane\": {\n";
+    json << "    \"a\": " << profile.maxValidPlane.a << ",\n";
+    json << "    \"b\": " << profile.maxValidPlane.b << ",\n";
+    json << "    \"c\": " << profile.maxValidPlane.c << ",\n";
+    json << "    \"d\": " << profile.maxValidPlane.d << "\n";
     json << "  }\n";
     json << "}\n";
     
@@ -617,7 +630,7 @@ bool SensorCalibration::deserializeProfile(const std::string& jsonData, SensorCa
         profile.basePlaneCalibration.basePlane.c = extractFloat("c");
         profile.basePlaneCalibration.basePlane.d = extractFloat("d");
         
-        profile.basePlaneCalibration.avgDistanceToPlane = extractFloat("avgDistanceToPlane");
+    profile.basePlaneCalibration.avgDistanceToPlane = extractFloat("avgDistanceToPlane");
         profile.basePlaneCalibration.maxDistanceToPlane = extractFloat("maxDistanceToPlane");
         profile.basePlaneCalibration.planeFitRSquared = extractFloat("planeFitRSquared");
         
@@ -627,6 +640,27 @@ bool SensorCalibration::deserializeProfile(const std::string& jsonData, SensorCa
             isValidPos += 22;
             profile.basePlaneCalibration.isValidCalibration = jsonData.substr(isValidPos, 4) == "true";
         }
+
+        // Extract minValidPlane / maxValidPlane if present
+        auto extractPlaneComponent = [&](const std::string& planeName, const std::string& component)->float {
+            std::string search = "\"" + planeName + "\""; // find block start
+            auto blockPos = jsonData.find(search);
+            if (blockPos == std::string::npos) return 0.0f;
+            auto compPos = jsonData.find("\"" + component + "\":", blockPos);
+            if (compPos == std::string::npos) return 0.0f;
+            compPos += component.size() + 3; // skip key":
+            auto end = jsonData.find_first_of(",\n}", compPos);
+            if (end == std::string::npos) return 0.0f;
+            try { return std::stof(jsonData.substr(compPos, end - compPos)); } catch(...) { return 0.0f; }
+        };
+        profile.minValidPlane.a = extractPlaneComponent("minValidPlane", "a");
+        profile.minValidPlane.b = extractPlaneComponent("minValidPlane", "b");
+        profile.minValidPlane.c = extractPlaneComponent("minValidPlane", "c");
+        profile.minValidPlane.d = extractPlaneComponent("minValidPlane", "d");
+        profile.maxValidPlane.a = extractPlaneComponent("maxValidPlane", "a");
+        profile.maxValidPlane.b = extractPlaneComponent("maxValidPlane", "b");
+        profile.maxValidPlane.c = extractPlaneComponent("maxValidPlane", "c");
+        profile.maxValidPlane.d = extractPlaneComponent("maxValidPlane", "d");
         
         // Set timestamps to current time
         auto now = std::chrono::system_clock::now();

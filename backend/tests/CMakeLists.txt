@@ -21,7 +21,17 @@ add_executable(CalderaTests
     processing/test_CoordinateTransform.cpp
     processing/test_TemporalFilter.cpp
     processing/test_processing_invalid_pixels.cpp
+    processing/test_fusion_passthrough.cpp
     processing/test_processing_plane_validation.cpp
+    processing/test_processing_spatial_filter_impulse.cpp
+    processing/test_processing_env_calibration_fallback.cpp
+    processing/test_processing_profile_loading.cpp
+    processing/test_processing_stability_metrics.cpp
+    processing/test_processing_adaptive_spatial.cpp
+    processing/test_processing_adaptive_spatial_phase2.cpp
+    processing/test_processing_spatial_sampling_metric.cpp
+    processing/test_processing_spatial_kernel_wide5.cpp
+    processing/test_processing_adaptive_temporal_scale.cpp
     # shm
     shm/test_shm_reader.cpp
     shm/test_shm_overflow.cpp

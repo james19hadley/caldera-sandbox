@@ -1,3 +1,105 @@
+# Legacy Processing Analysis (SARndbox 2.8)
+
+Date: 2025-10-05
+Scope: Compare legacy SARndbox (extras/SARndbox-2.8) filtering & elevation pipeline with current Caldera processing implementation. Identify reusable semantics vs. deliberate divergence and enumerate concrete action items.
+
+## 1. Legacy Pipeline Overview (Derived from `Sandbox.cpp` + `FrameFilter.cpp`)
+High-level data flow (runtime threads):
+```
+Kinect Frame -> FrameFilter (background thread) -> Filtered Frame Queue -> Sandbox foreground rendering -> DEM / Water / Tools
+```
+Key processing inside `FrameFilter::filterThreadMethod`:
+1. Copy new raw depth frame into working slot (with background thread synchronization).
+2. Per-pixel loop:
+	- Maintain circular "averaging buffer" of last N (numAveragingSlots) raw depth samples per pixel.
+	- Maintain statistics per pixel: count, sum, sum of squares (3 x unsigned int) for valid samples only.
+	- Depth correction via `PixelDepthCorrection::correct` before plane validity test (pixel + 0.5 center shift).
+	- Image-space plane validity test using two plane equations: `minPlane`, `maxPlane` in depth image coordinate system.
+	- If valid: add new sample, subtract aged slot sample (if it was valid) to keep rolling stats.
+	- Stability criterion: pixel considered stable if `count >= minNumSamples` AND `sPtr[2]*count <= maxVariance*count*count + sum*sum` (variance bound inequality form avoiding division).
+	- If stable: update output value with running mean only if absolute delta exceeds `hysteresis` threshold; else retain previous output (temporal smoothing + change suppression).
+	- If instable and `retainValids` true: keep previous output; otherwise output `instableValue` (default 0.0).
+3. After per-pixel pass: spatial filter (if enabled) = two full passes of a separable 3-tap kernel (vertical then horizontal) with border handling as weighted 2/3 edges.
+4. Post filtering: deliver frame to consumer via callback.
+
+## 2. Legacy Concepts Extracted
+| Concept | Legacy Implementation | Notes / Parameters |
+|---------|-----------------------|--------------------|
+| Depth Correction | Per-pixel correction class (`PixelDepthCorrection`) | We currently have a placeholder radial factor; no per-pixel map yet. |
+| Validity (Planes) | Image-space min/max planes after transforming base plane | We implemented world-space plane clipping; parity mode pending (image-space). |
+| Rolling Statistics | count / sum / sumSq over sliding window of raw depth | Our temporal filter works over world-space height; we log variance proxy via EMA of frame deltas. |
+| Stability Criterion | Inequality avoiding float division (variance bound) | Potential reuse for more numerically stable test. |
+| Hysteresis (Temporal) | Mean applied only if delta > hysteresis; else hold | We borrowed concept but currently simpler stability ratio + variance threshold. |
+| Instable Handling | Optionally hold last good or output default baseline | We treat unstable as trigger for enabling spatial filter (adaptive path). |
+| Spatial Filter | Fixed 3x3 separable [1 2 1] with double pass (vertical then horizontal twice overall) | We run single pass currently; strong mode duplicates pass (aligns). |
+| Threading | Dedicated filtering thread + frame queue | Not implemented; we process synchronously now. |
+| Per-Pixel Running Mean | Stored in `validBuffer` / output frame | We maintain previous world frame heightmap implicitly. |
+| Plane Transform | Base plane transformed to depth-image coordinate space | Currently use world-space transform & plane evaluation per point. |
+
+## 3. Mapping to Current Caldera Implementation
+| Legacy Feature | Caldera Status | Gap / Decision |
+|----------------|---------------|----------------|
+| Image-space plane validity | Not yet (world-space only) | Add optional parity mode for regression vs legacy. |
+| Sliding window raw depth stats | Not implemented (use temporal smoothing & variance of deltas) | Could add lightweight integer stats for precise variance if needed for confidence map. |
+| Variance inequality check | Not implemented | Evaluate for better stable detection vs heuristic thresholds. |
+| Hysteresis delta threshold per pixel | Not implemented (we have frame-level stability gating) | Consider local per-pixel hysteresis to avoid flicker on edges. |
+| Double-pass spatial when unstable | Implemented as "strong mode" | Matches legacy semantics conceptually. |
+| Per-pixel correction map | Placeholder only | Roadmap M3/M7 extension. |
+| Background thread filter | Not implemented | Defer until performance profiling (risk of latency). |
+| InstableValue default fill | Not needed (we currently keep last or NaN) | Keep divergence unless consumer requires sentinel fill. |
+
+## 4. Reuse vs Re-Design Decisions
+| Area | Decision | Rationale |
+|------|----------|-----------|
+| Stability Criterion | Consider porting inequality form | Avoid division & floating precision issues; matches proven legacy. |
+| Per-Pixel Hysteresis | Optional future addition | Could reduce shimmering; implement after confidence map if needed. |
+| Image-Space Plane Mode | Will add as flag `CALDERA_VALIDATE_IMAGE_SPACE` | Ensures comparability for regression tests. |
+| Double-Pass Strong Mode | Already aligned | Maintain; evaluate multi-kernel only if measurable improvement. |
+| Sliding Window Stats | Possibly simplified variant (count, mean, M2) | Lower memory vs full sum of squares; feed confidence map. |
+| Threading | Postpone | Complexity not justified until profiling indicates CPU bound. |
+
+## 5. Action Items (Proposed)
+Priority (near-term first):
+1. Add image-space plane validation optional path (legacy parity) – reuse legacy plane equation transform logic.
+2. Introduce reusable inline stability check helper using inequality pattern (wrap current metrics for experimental A/B in tests).
+3. Design confidence map using (a) per-pixel mean difference EMA OR (b) sliding window variance inequality classification; choose minimal memory approach.
+4. Benchmark strong double-pass vs alternative wider kernel ([1 4 6 4 1]) vs legacy double-pass of [1 2 1]; retain best variance reduction / blur trade-off.
+5. Optional: per-pixel hysteresis threshold (use small epsilon, maybe adapt from legacy 0.1f scaled to world units).
+6. Document divergence: instable fill strategy & threading (explicitly accepted differences).
+
+## 6. Risk / Compatibility Considerations
+- Parity Mode Risk: Additional branch may add small overhead; mitigate by compiling out when not enabled.
+- Stability Inequality vs Current Heuristics: Changing activation thresholds could destabilize current adaptive gating; gate behind experimental env variable.
+- Wider Kernel: Increases blur footprint; must quantify effect via edge preservation metric (Sobel gradient energy change) before adoption.
+
+## 7. Proposed Env Extensions
+| Env | Purpose | Default |
+|-----|---------|---------|
+| CALDERA_VALIDATE_IMAGE_SPACE | Toggle legacy-style image-space plane clipping | 0 |
+| CALDERA_ADAPTIVE_STABILITY_MODE | 0=current heuristic, 1=legacy inequality | 0 |
+| CALDERA_SPATIAL_KERNEL_ALT | "classic" / "passthrough" / "wide5" | classic |
+| CALDERA_HYSTERESIS_EPS | Per-pixel delta threshold (if enabled) | disabled |
+
+## 8. Data Structure Adjustments
+If adopting sliding window stats: store for each pixel:
+```
+struct PixelStat { uint16_t count; float mean; float m2; } // Welford
+```
+Memory: 8 bytes/pixel vs legacy 12 bytes (count,sum,sumSq). For 640x480 ≈ 2.46 MB (double-buffer optional).
+
+## 9. Confidence Map Outline (Link to Legacy)
+Legacy stability = (count >= minSamples && variance <= threshold). We can map confidence:
+```
+confidence = clamp( w1 * stableFlag + w2 * (1 - normalizedVariance) + w3 * temporalConsistency , 0, 1 )
+```
+Where normalizedVariance derived from (m2 / (count-1)) scaled by threshold.
+
+## 10. Summary
+Most core adaptive ideas we reintroduced (double-pass, hysteresis concept) are consistent with proven legacy behavior. Immediate value: reintroduce image-space plane option and evaluate legacy variance inequality for more principled stability gating before expanding kernel complexity.
+
+---
+(End of LEGACY_ANALYSIS)
+
 # SARndbox-2.8 Data Processing Analysis
 
 ## Legacy Project Overview
