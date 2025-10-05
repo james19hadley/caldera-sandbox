@@ -18,6 +18,18 @@ SensorCalibration::SensorCalibration()
     
     // Set default calibration directory
     calibrationDirectory_ = std::filesystem::current_path() / "config" / "calibration";
+    // Allow env override
+    if (const char* env = std::getenv("CALDERA_CALIBRATION_DIR")) {
+        calibrationDirectory_ = std::filesystem::path(env);
+        logger_->info("Using calibration directory from CALDERA_CALIBRATION_DIR={}", env);
+    } else {
+        // Also try repo-standard location relative to source tree
+        std::filesystem::path repoCandidate = std::filesystem::current_path() / "backend" / "config" / "calibration";
+        if (std::filesystem::exists(repoCandidate)) {
+            calibrationDirectory_ = repoCandidate;
+            logger_->info("Using repo calibration directory {}", repoCandidate.string());
+        }
+    }
 }
 
 // === Sensor Management ===

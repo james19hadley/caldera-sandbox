@@ -76,6 +76,7 @@ add_executable(CalderaTests
     integration/test_pipeline_metrics.cpp
     integration/test_process_shm_blackbox.cpp
     integration/test_worldframe_client_shm.cpp
+    integration/test_real_sensor_e2e.cpp
     # memory leak tests
     memory/test_memory_leaks.cpp
     memory/test_hal_memory.cpp

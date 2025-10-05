@@ -48,15 +48,23 @@ setup_test_environment() {
   # Set reasonable defaults for test stability (can be overridden by user)
   export CALDERA_STRICT_RECONNECT="${CALDERA_STRICT_RECONNECT:-0}"
   
-  # Reduce log noise during tests - only show warnings and errors by default
-  export CALDERA_LOG_LEVEL="${CALDERA_LOG_LEVEL:-warn}"  # Changed from 'error' to 'warn' for better balance
+  # If user asked to run the analyzer as part of the test, prefer more verbose
+  # logging and disable quiet mode so analyzer output and sidecar files are
+  # produced reliably (matches direct-run behavior).
+  if [ "${CALDERA_RUN_ANALYZER:-0}" = "1" ]; then
+    export CALDERA_LOG_LEVEL="${CALDERA_LOG_LEVEL:-info}"
+    export CALDERA_QUIET_MODE="${CALDERA_QUIET_MODE:-0}"
+  else
+    # Reduce log noise during tests - only show warnings and errors by default
+    export CALDERA_LOG_LEVEL="${CALDERA_LOG_LEVEL:-warn}"
+    # Quiet mode for synthetic sensors during tests
+    export CALDERA_QUIET_MODE="${CALDERA_QUIET_MODE:-1}"
+  fi
+
   export CALDERA_COMPACT_FRAME_LOG="${CALDERA_COMPACT_FRAME_LOG:-1}"
   
   # Disable frame-level tracing during tests to reduce noise
   export CALDERA_LOG_FRAME_TRACE_EVERY="${CALDERA_LOG_FRAME_TRACE_EVERY:-0}"
-  
-  # Quiet mode for synthetic sensors during tests
-  export CALDERA_QUIET_MODE="${CALDERA_QUIET_MODE:-1}"
 }
 
 if [ ! -d "$BUILD_DIR" ]; then

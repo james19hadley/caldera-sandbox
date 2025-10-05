@@ -61,4 +61,3 @@ frontend/Caldera/[Aa]ssets/AssetStoreTools*
 # --- IDE specific ---
 .vscode/
 extras/
-backend/config/calibration

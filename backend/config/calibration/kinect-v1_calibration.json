@@ -1,0 +1,17 @@
+{
+  "sensorId": "kinect-v1",
+  "sensorType": "kinect-v1",
+  "basePlaneCalibration": {
+    "pointCount": 20,
+    "basePlane": {
+      "a": 0.000000,
+      "b": 0.000000,
+      "c": 1.000000,
+      "d": -0.926650
+    },
+    "avgDistanceToPlane": 0.004550,
+    "maxDistanceToPlane": 0.015350,
+    "planeFitRSquared": 0.651726,
+    "isValidCalibration": true
+  }
+}
