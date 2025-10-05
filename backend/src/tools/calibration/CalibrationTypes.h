@@ -3,29 +3,14 @@
 
 #include <vector>
 #include <string>
-#include <chrono>
 #include <cmath>
+#include <chrono>
+#include "common/DataTypes.h"  // For Point3D, Point2D
 
 namespace caldera::backend::tools::calibration {
 
-// 3D point in sensor coordinate space
-struct Point3D {
-    float x = 0.0f;
-    float y = 0.0f;
-    float z = 0.0f;
-    
-    Point3D() = default;
-    Point3D(float x_, float y_, float z_) : x(x_), y(y_), z(z_) {}
-};
-
-// 2D point in image coordinate space
-struct Point2D {
-    int x = 0;
-    int y = 0;
-    
-    Point2D() = default;
-    Point2D(int x_, int y_) : x(x_), y(y_) {}
-};
+using caldera::backend::common::Point2D;
+using caldera::backend::common::Point3D;
 
 // Plane equation: ax + by + cz + d = 0
 struct PlaneEquation {
@@ -35,12 +20,12 @@ struct PlaneEquation {
     float d = 0.0f;  // Distance from origin
     
     // Check if point is above plane (positive), on plane (zero), or below (negative)
-    float evaluatePoint(const Point3D& point) const {
+    float evaluatePoint(const common::Point3D& point) const {
         return a * point.x + b * point.y + c * point.z + d;
     }
     
     // Get distance from point to plane
-    float distanceToPoint(const Point3D& point) const {
+    float distanceToPoint(const common::Point3D& point) const {
         float norm = std::sqrt(a*a + b*b + c*c);
         if (norm == 0.0f) return 0.0f;
         return std::abs(evaluatePoint(point)) / norm;
@@ -53,10 +38,10 @@ struct PlaneCalibrationData {
     std::chrono::system_clock::time_point timestamp;
     
     // Collected 3D points for plane fitting
-    std::vector<Point3D> collectedPoints;
+    std::vector<common::Point3D> collectedPoints;
     
     // Corresponding 2D image coordinates (for validation)
-    std::vector<Point2D> imagePoints;
+    std::vector<common::Point2D> imagePoints;
     
     // Fitted plane equation
     PlaneEquation basePlane;
