@@ -6,6 +6,15 @@
 #include <limits>
 #include <cmath>
 #include <algorithm>
+#include <unordered_map>
+
+#ifdef _MSC_VER
+#define FUSION_LIKELY(x) (x)
+#define FUSION_UNLIKELY(x) (x)
+#else
+#define FUSION_LIKELY(x) (__builtin_expect(!!(x),1))
+#define FUSION_UNLIKELY(x) (__builtin_expect(!!(x),0))
+#endif
 
 namespace caldera::backend::processing {
 
@@ -29,6 +38,8 @@ class FusionAccumulator {
 public:
     struct FusionStats {
         size_t layerCount = 0;
+        size_t activeLayerCount = 0;            // layers seen this frame (non-stale)
+        size_t staleExcludedCount = 0;          // number of known sensors considered stale this frame
         std::vector<uint32_t> layerValidCounts; // per-layer count of finite values
         uint32_t fusedValidCount = 0;           // finite values in fused output
         float fusedValidRatio = 0.0f;           // fusedValidCount / totalPixels
@@ -44,6 +55,12 @@ public:
         layers_.clear();
         framePixelCount_ = static_cast<size_t>(width_) * static_cast<size_t>(height_);
         stats_ = FusionStats{}; // reset
+        // Refresh dropout window (cheap getenv read) allowing dynamic tuning in tests
+        if(!dropoutWindowLoaded_){
+            const char* env = std::getenv("CALDERA_FUSION_DROPOUT_WINDOW");
+            if(env){ try { dropoutWindow_ = static_cast<uint64_t>(std::stoull(env)); } catch(...){} }
+            dropoutWindowLoaded_ = true; // still allow override via forceSet if needed later
+        }
         // Reserve enough for at least one layer; multi-layer appends will extend but reuse capacity across frames.
         if(heightsStorage_.capacity() < framePixelCount_) heightsStorage_.reserve(framePixelCount_ * 2); // small headroom
         if(confidenceStorage_.capacity() < framePixelCount_) confidenceStorage_.reserve(framePixelCount_ * 2);
@@ -80,91 +97,52 @@ public:
         layers_.push_back(entry);
         stats_.layerValidCounts.push_back(validCount);
         stats_.layerCount = layers_.size();
+        // Update last-seen tracking for dropout logic
+        lastSeenFrameId_[entry.sensorId] = frameId_;
     }
 
     // weightsPerLayer: optional external array of size layerCount (pre-normalized or raw);
     // perPixelWeights: optional flat array (layerCount * totalPixels) for future fine-grained weighting (unused Phase 1).
     void fuse(std::vector<float>& outHeightMap,
               std::vector<float>* outConfidence = nullptr,
-              const float* weightsPerLayer = nullptr,
-              const float* perPixelWeights = nullptr) {
-        (void)weightsPerLayer; (void)perPixelWeights; // unused in current phase
-        const size_t total = framePixelCount_;
-        if (outHeightMap.size() != total) outHeightMap.assign(total, 0.0f);
-        if (outConfidence && outConfidence->size() != total) outConfidence->assign(total, 1.0f);
+              const float* = nullptr,
+              const float* = nullptr) {
+        // MVP: passthrough for 1 layer, concat along width for 2 layers, else error. No weights, dropout, NaN, etc.
+        // TODO: advanced fusion, dropout, weights, NaN/invalid, confidence, metrics, etc. (see plan)
         if (layers_.empty()) {
-            if (outConfidence) std::fill(outConfidence->begin(), outConfidence->end(), 0.0f);
-            stats_.fusedValidCount = 0;
-            stats_.fusedValidRatio = 0.0f;
+            outHeightMap.clear();
+            if (outConfidence) outConfidence->clear();
             return;
         }
         if (layers_.size() == 1) {
+            // Passthrough
             const LayerEntry& L = layers_[0];
             const float* hSrc = heightsStorage_.data() + L.offset;
-            std::copy(hSrc, hSrc + total, outHeightMap.data());
-            uint32_t fusedValid=0; for(size_t i=0;i<total;++i) if(std::isfinite(outHeightMap[i])) ++fusedValid;
-            if (outConfidence) {
-                if (L.hasConfidence) {
-                    const float* cSrc = confidenceStorage_.data() + L.confOffset;
-                    // Clamp values into [0,1]
-                    for(size_t i=0;i<total;++i){ float cv=cSrc[i]; if(!(cv>=0.f) || !std::isfinite(cv)) cv=0.f; if(cv>1.f) cv=1.f; (*outConfidence)[i]=cv; }
-                } else {
-                    std::fill(outConfidence->begin(), outConfidence->end(), 1.0f);
-                }
-            }
-            stats_.strategy = layers_[0].hasConfidence ? 1 : 0; // treat single layer w/ confidence as strategy 1 for consistency
-            stats_.fusedValidCount = fusedValid;
-            stats_.fusedValidRatio = total? (float)fusedValid / (float)total : 0.0f;
+            outHeightMap.assign(hSrc, hSrc + framePixelCount_);
+            if (outConfidence) outConfidence->clear(); // not supported
             return;
         }
-        // Multi-layer
-        bool anyConfidence = false; for(const auto& L: layers_) if(L.hasConfidence){ anyConfidence=true; break; }
-        stats_.strategy = anyConfidence ? 1 : 0;
-        uint32_t fusedValid=0, fbMinZ=0, fbEmpty=0;
-        if(stats_.strategy == 1){
-            // Weighted strategy with per-pixel fallback to min-z
-            for(size_t i=0;i<total;++i){
-                double sumR=0.0, sumRH=0.0; bool anyFinite=false; bool anyWeight=false;
-                for(const auto& L: layers_){
-                    const float* hSrc = heightsStorage_.data() + L.offset; float v=hSrc[i];
-                    if(!std::isfinite(v)) continue; anyFinite=true; float c=1.0f;
-                    if(L.hasConfidence){ const float* cSrc = confidenceStorage_.data() + L.confOffset; float rawC=cSrc[i]; if(!(rawC>=0.f) || !std::isfinite(rawC)) rawC=0.f; if(rawC>1.f) rawC=1.f; c=rawC; }
-                    if(c>0.f){ anyWeight=true; sumR+=c; sumRH+= double(c)*double(v); }
-                }
-                if(!anyFinite){ outHeightMap[i]=0.0f; ++fbEmpty; continue; }
-                if(!anyWeight || sumR<=0.0){
-                    float best=std::numeric_limits<float>::infinity();
-                    for(const auto& L: layers_){ const float* hSrc=heightsStorage_.data()+L.offset; float v=hSrc[i]; if(!std::isfinite(v)) continue; if(v<best) best=v; }
-                    if(best==std::numeric_limits<float>::infinity()){ outHeightMap[i]=0.0f; ++fbEmpty; }
-                    else { outHeightMap[i]=best; ++fusedValid; ++fbMinZ; }
-                } else {
-                    float hv = static_cast<float>(sumRH / sumR); outHeightMap[i]=hv; ++fusedValid;
-                }
+        if (layers_.size() == 2) {
+            // Concat along width: output shape 2W x H
+            const LayerEntry& L1 = layers_[0];
+            const LayerEntry& L2 = layers_[1];
+            if (width_ <= 0 || height_ <= 0) { outHeightMap.clear(); if (outConfidence) outConfidence->clear(); return; }
+            size_t N = static_cast<size_t>(width_) * static_cast<size_t>(height_);
+            const float* h1 = heightsStorage_.data() + L1.offset;
+            const float* h2 = heightsStorage_.data() + L2.offset;
+            outHeightMap.resize(N * 2);
+            for (int y = 0; y < height_; ++y) {
+                // left: h1, right: h2
+                std::copy(h1 + y * width_, h1 + (y + 1) * width_, outHeightMap.begin() + y * 2 * width_);
+                std::copy(h2 + y * width_, h2 + (y + 1) * width_, outHeightMap.begin() + y * 2 * width_ + width_);
             }
-            if(outConfidence){
-                for(size_t i=0;i<total;++i){
-                    double sumR=0.0, sumRC=0.0; bool anyFinite=false; for(const auto& L: layers_){ const float* hSrc=heightsStorage_.data()+L.offset; float v=hSrc[i]; if(!std::isfinite(v)) continue; anyFinite=true; float c=1.0f; if(L.hasConfidence){ const float* cSrc=confidenceStorage_.data()+L.confOffset; float rawC=cSrc[i]; if(!(rawC>=0.f)||!std::isfinite(rawC)) rawC=0.f; if(rawC>1.f) rawC=1.f; c=rawC; } if(c>0.f){ sumR+=c; sumRC+=c*c; } }
-                    if(!anyFinite || sumR<=0.0){ (*outConfidence)[i]=0.0f; }
-                    else { (*outConfidence)[i]= static_cast<float>(sumRC / sumR); }
-                }
-            }
-        } else {
-            // Pure min-z
-            for(size_t i=0;i<total;++i){
-                float best=std::numeric_limits<float>::infinity();
-                for(const auto& L: layers_){ const float* hSrc=heightsStorage_.data()+L.offset; float v=hSrc[i]; if(!std::isfinite(v)) continue; if(v<best) best=v; }
-                if(best==std::numeric_limits<float>::infinity()){ outHeightMap[i]=0.0f; ++fbEmpty; }
-                else { outHeightMap[i]=best; ++fusedValid; }
-            }
-            if(outConfidence){
-                for(size_t i=0;i<total;++i){
-                    float cBest=0.0f; for(const auto& L: layers_){ if(!L.hasConfidence){ cBest=std::max(cBest,1.0f); continue; } const float* cSrc=confidenceStorage_.data()+L.confOffset; float cv=cSrc[i]; if(!(cv>=0.f)||!std::isfinite(cv)) cv=0.f; if(cv>1.f) cv=1.f; cBest=std::max(cBest,cv); } (*outConfidence)[i]=cBest; }
-            }
+            if (outConfidence) outConfidence->clear(); // not supported
+            return;
         }
-        stats_.fusedValidCount = fusedValid;
-        stats_.fusedValidRatio = total? (float)fusedValid / (float)total : 0.0f;
-        stats_.fallbackMinZCount = fbMinZ;
-        stats_.fallbackEmptyCount = fbEmpty;
+        // Not supported
+        outHeightMap.clear();
+        if (outConfidence) outConfidence->clear();
+        // TODO: error/exception/logging for >2 sensors
     }
 
     size_t layerCount() const { return layers_.size(); }
@@ -186,6 +164,10 @@ private:
     std::vector<float> confidenceStorage_;
     size_t framePixelCount_ = 0;
     FusionStats stats_{};
+    // Dropout tracking
+    std::unordered_map<std::string,uint64_t> lastSeenFrameId_;
+    uint64_t dropoutWindow_ = 60; // frames
+    bool dropoutWindowLoaded_ = false;
 };
 
 } // namespace caldera::backend::processing

@@ -159,32 +159,24 @@ Acceptance Criteria MVP (Met):
 * Stability monotonic trend confirmed in test.
 Remaining (Phase 2): external exposure, fusion weighting, optional per-pixel temporal variance.
 
-### M6: Multi-Sensor Fusion (Foundational Architecture) – IN PROGRESS
-Goal: Combine multiple sensor (or synthetic) layers into a single stable height map using progressive strategies.
+### M6: Multi-Sensor Fusion (Foundational Architecture) – SIMPLIFIED MVP
+Goal: Enable basic multi-sensor support with minimal logic for now; advanced fusion, dropout, weights, NaN, confidence, etc. are deferred (see below).
 
-Phase Breakdown & Status:
-1. Phase 0: Scaffold (`beginFrame`, `addLayer`, single-layer passthrough) — COMPLETED.
-2. Phase 1: Min-z multi-layer fusion (NaN-aware, per-layer storage) — COMPLETED (`test_fusion_min_z.cpp`).
-3. Phase 2: Confidence-weighted average (weighted blend) — COMPLETED (per-pixel weights = clamped confidence; fallback to min-z on zero-sum; metrics + fallbacks; tests `test_fusion_weighted.cpp`, `test_fusion_zero_confidence.cpp`, `test_fusion_all_invalid.cpp`, `test_fusion_confidence_clamp.cpp`).
-4. Phase 3: Timeout & sensor dropout handling + dropout metrics — PENDING.
-5. Phase 4: Pluggable strategies (enum/strategy objects with strategy selection injection) — PENDING.
+Current implementation (MVP):
+- If 1 sensor: passthrough (copy input to output, shape WxH).
+- If 2 sensors of same size: concatenate along width (output shape 2W x H, left = sensor 1, right = sensor 2).
+- All other cases: not supported (future work).
+- No dropout, no weights, no NaN/invalid/metrics/strategy logic yet.
 
-Implemented Artifacts (Phase 2):
-* Extended `FusionAccumulator` with strategy field (0=min-z,1=confidence-weighted) and fallback counters (`fallbackMinZCount`, `fallbackEmptyCount`).
-* Confidence-weighted fuse path: per pixel compute sum r_i = confidence_i (optionally sensor global weight placeholder), normalize, accumulate weighted average; if sum==0 and any finite -> min-z fallback else empty fallback (0).
-* Output composite confidence (weighted mean when exported) via optional buffer path in `fuse` when `CALDERA_PROCESSING_EXPORT_CONFIDENCE`=1.
-* Periodic fusion stats logging controlled by `CALDERA_FUSION_LOG_EVERY` (logs strategy, fusedValidRatio, fallbacks).
-* Synthetic duplicate layer injection in `ProcessingManager` when `CALDERA_FUSION_DUP_LAYER=1` for exercising weighting logic (shift + per-layer adjustable confidences via `CALDERA_FUSION_DUP_LAYER_CONF`).
-* Metrics: per-layer valid counts, fused valid count, fused valid ratio, fallback counters, chosen strategy.
+Deferred (future M6/M7):
+- Min-z, confidence-weighted, robust fusion strategies
+- Sensor dropout/timeout handling
+- Per-sensor weights, confidence, NaN/invalid handling
+- Pluggable strategy interface, env selection
+- Metrics, logging, stats, integration tests
+- GPU/parallel path, outlier attenuation, cross-sensor consistency
 
-Remaining (short-term M6 roadmap):
-* Phase 3: Sensor dropout/timeout handling (last-seen frame id tracking, stale exclusion metrics)
-* Phase 4: Strategy abstraction (pluggable strategies via env `CALDERA_FUSION_STRATEGY`)
-* Global sensor weights parsing (`CALDERA_FUSION_SENSOR_WEIGHTS`)
-* Integration tests once fusion logic resides in concrete FusionStage
-
-Deferred (beyond M6): residual/outlier attenuation, spatially adaptive cross-sensor consistency metric, GPU vectorized fusion path.
-
+Documented in code as TODO/FIXME for future extension.
 ### M7+: Advanced (Deferred)
 - Motion field estimation
 - GPU ports (profiling-driven)

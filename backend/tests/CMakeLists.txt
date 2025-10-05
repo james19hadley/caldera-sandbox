@@ -30,6 +30,8 @@ add_executable(CalderaTests
     processing/test_fusion_all_invalid.cpp
     processing/test_fusion_zero_confidence.cpp
     processing/test_fusion_confidence_clamp.cpp
+    processing/test_fusion_dropout.cpp
+    processing/test_fusion_concat.cpp
     processing/test_processing_plane_validation.cpp
     processing/test_processing_spatial_filter_impulse.cpp
     processing/test_processing_env_calibration_fallback.cpp
