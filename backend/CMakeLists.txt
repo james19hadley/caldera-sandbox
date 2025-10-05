@@ -229,6 +229,21 @@ add_executable(KinectV1Ctl
 target_include_directories(KinectV1Ctl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(KinectV1Ctl PRIVATE caldera_backend_core)
 
+# Data Analyzer - analyzes recorded sensor data through processing pipeline
+add_executable(DataAnalyzer
+    src/tools/analyzer/data_analyzer_main.cpp
+    src/tools/viewer/SensorViewerCore.cpp
+    src/tools/viewer/SimpleViewer.cpp
+    src/tools/viewer/VideoWindow.cpp
+    src/tools/viewer/SensorEnumerator.cpp
+)
+target_include_directories(DataAnalyzer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(DataAnalyzer PRIVATE 
+    caldera_backend_core
+    OpenGL::GL 
+    glfw
+)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 

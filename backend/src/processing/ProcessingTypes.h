@@ -4,6 +4,7 @@
 #include <vector>
 #include <chrono>
 #include <cstdint>
+#include <array>
 
 namespace caldera::backend::processing {
 
@@ -49,6 +50,25 @@ struct TransformParameters {
     // Sensor-specific scaling and offset
     float depthScale = 0.001f;      // Convert raw depth to meters
     float depthOffset = 0.0f;       // Depth value offset
+    
+    // Plane-based validation (SARndbox algorithm)
+    // Pixel is valid if: minValidPlane(x,y,z) >= 0 && maxValidPlane(x,y,z) <= 0
+    std::array<float, 4> minValidPlane = {0.0f, 0.0f, 1.0f, -0.5f};  // z >= 0.5m (above min height)
+    std::array<float, 4> maxValidPlane = {0.0f, 0.0f, 1.0f, -2.0f};  // z <= 2.0m (below max height)
+    
+    /**
+     * Validate a 3D point against plane constraints
+     * @param x,y,z World coordinates in meters
+     * @return true if point is within valid range
+     */
+    bool validatePoint(float x, float y, float z) const {
+        // Apply plane equations: ax + by + cz + d
+        float minValue = minValidPlane[0]*x + minValidPlane[1]*y + minValidPlane[2]*z + minValidPlane[3];
+        float maxValue = maxValidPlane[0]*x + maxValidPlane[1]*y + maxValidPlane[2]*z + maxValidPlane[3];
+        
+        // Point is valid if it's on the correct side of both planes
+        return (minValue >= 0.0f) && (maxValue <= 0.0f);
+    }
 };
 
 /**

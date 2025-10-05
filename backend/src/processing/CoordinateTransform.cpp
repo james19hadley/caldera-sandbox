@@ -39,8 +39,25 @@ bool CoordinateTransform::loadFromCalibration(const tools::calibration::SensorCa
     params_.planeC = basePlane.c;
     params_.planeD = basePlane.d;
     
-    logger_->debug("Base plane: {}x + {}y + {}z + {} = 0", 
-                  params_.planeA, params_.planeB, params_.planeC, params_.planeD);
+    // Initialize validation planes based on base plane
+    // For SARndbox: valid range accommodates both normal sandbox heights and rejects extreme values
+    float baseHeight = -basePlane.d / basePlane.c;  // Extract z-coordinate of base plane
+    
+    // minValidPlane: slightly below base plane (z >= baseHeight - 0.2) to allow for depressions  
+    params_.minValidPlane[0] = 0.0f;  // a
+    params_.minValidPlane[1] = 0.0f;  // b
+    params_.minValidPlane[2] = 1.0f;  // c
+    params_.minValidPlane[3] = -(baseHeight - 0.2f);  // d
+    
+    // maxValidPlane: allow realistic sand heights (z <= baseHeight + 1.45) - calibrated from real Kinect data  
+    params_.maxValidPlane[0] = 0.0f;  // a
+    params_.maxValidPlane[1] = 0.0f;  // b
+    params_.maxValidPlane[2] = 1.0f;  // c (positive for <= constraint)
+    params_.maxValidPlane[3] = -(baseHeight + 1.45f);    // d (negative)
+    
+    logger_->debug("Base plane: {}x + {}y + {}z + {} = 0 (height = {}m)", 
+                  params_.planeA, params_.planeB, params_.planeC, params_.planeD, baseHeight);
+    logger_->debug("Valid range: {:.2f}m to {:.2f}m", baseHeight - 0.2f, baseHeight + 1.45f);
     
     // Load sensor position from calibration if available
     // For now, use default position above the sandbox
@@ -80,6 +97,13 @@ Point3D CoordinateTransform::transformPixelToWorld(int pixelX, int pixelY, float
     
     // Final validation check - ensure result coordinates are finite
     if (!std::isfinite(worldPoint.x) || !std::isfinite(worldPoint.y) || !std::isfinite(worldPoint.z)) {
+        worldPoint.valid = false;
+        worldPoint.x = worldPoint.y = worldPoint.z = 0.0f;
+        return worldPoint;
+    }
+    
+    // Plane-based validation - check if point lies within valid depth range
+    if (!params_.validatePoint(worldPoint.x, worldPoint.y, worldPoint.z)) {
         worldPoint.valid = false;
         worldPoint.x = worldPoint.y = worldPoint.z = 0.0f;
     }

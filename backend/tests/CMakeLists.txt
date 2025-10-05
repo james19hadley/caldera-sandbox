@@ -20,6 +20,8 @@ add_executable(CalderaTests
     processing/test_DepthCorrector.cpp
     processing/test_CoordinateTransform.cpp
     processing/test_TemporalFilter.cpp
+    processing/test_processing_invalid_pixels.cpp
+    processing/test_processing_plane_validation.cpp
     # shm
     shm/test_shm_reader.cpp
     shm/test_shm_overflow.cpp
