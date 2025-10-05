@@ -1,7 +1,7 @@
-#include "tools/SensorViewerCore.h"
-#include "tools/SimpleViewer.h"
-#include "tools/VideoWindow.h"
-#include "tools/SensorEnumerator.h"
+#include "tools/viewer/SensorViewerCore.h"
+#include "tools/viewer/SimpleViewer.h"
+#include "tools/viewer/VideoWindow.h"
+#include "tools/viewer/SensorEnumerator.h"
 #include "common/SensorResolutions.h"
 #include "common/Logger.h"
 #include <iostream>

@@ -1,4 +1,4 @@
-#include "tools/SimpleViewer.h"
+#include "tools/viewer/SimpleViewer.h"
 #include "common/Logger.h"
 #include <iostream>
 #include <iomanip>

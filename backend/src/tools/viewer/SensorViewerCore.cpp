@@ -1,4 +1,4 @@
-#include "tools/SensorViewerCore.h"
+#include "tools/viewer/SensorViewerCore.h"
 #include "hal/KinectV2_Device.h"
 #include "hal/KinectV1_Device.h"
 #include "hal/SensorRecorder.h"

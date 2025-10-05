@@ -129,6 +129,7 @@ add_library(caldera_backend_core STATIC
     src/transport/SharedMemoryReader.cpp
     src/transport/SharedMemoryWorldFrameClient.cpp
     src/transport/FifoManager.cpp
+    src/tools/calibration/SensorCalibration.cpp
     src/AppManager.cpp
 )
 
@@ -190,11 +191,11 @@ endif()
 
 ## Sensor Viewer Tool (multi-sensor viewer utility)
 add_executable(SensorViewer
-    src/tools/sensor_viewer_main.cpp
-    src/tools/SensorViewerCore.cpp
-    src/tools/SimpleViewer.cpp
-    src/tools/VideoWindow.cpp
-    src/tools/SensorEnumerator.cpp
+    src/tools/viewer/sensor_viewer_main.cpp
+    src/tools/viewer/SensorViewerCore.cpp
+    src/tools/viewer/SimpleViewer.cpp
+    src/tools/viewer/VideoWindow.cpp
+    src/tools/viewer/SensorEnumerator.cpp
 )
 
 target_include_directories(SensorViewer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -209,6 +210,14 @@ target_link_libraries(SensorViewer PRIVATE
     glfw
 )
 
+
+# Calibration Tool (sensor calibration and profile management)
+add_executable(CalibrationTool
+    src/tools/calibration/calibration_main.cpp
+)
+
+target_include_directories(CalibrationTool PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(CalibrationTool PRIVATE caldera_backend_core)
 
 # Kinect v1 control CLI (LED/Tilt) using vendored libfreenect
 add_executable(KinectV1Ctl

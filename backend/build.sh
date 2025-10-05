@@ -13,7 +13,7 @@
 #   ./build.sh -r SensorViewer    # Build specific target (Release)
 #   ./build.sh -i -d CalderaTests # Incremental build specific targets (Debug)
 #
-# Available targets: SensorBackend, SensorViewer, CalderaTests, CalderaHeavyTests
+# Available targets: SensorBackend, SensorViewer, CalibrationTool, KinectV1Ctl, CalderaTests, CalderaHeavyTests
 #
 # Run tests:
 #   ./test.sh
@@ -25,6 +25,11 @@
 # View live sensor data (after build):
 #   ./build/SensorViewer           # View live depth/color data (auto-detect sensor)
 #   ./build/SensorViewer -t 10     # View for 10 seconds
+#
+# Calibrate sensors (after build):
+#   ./build/CalibrationTool help           # Show calibration commands
+#   ./build/CalibrationTool list-sensors   # List available sensors
+#   ./build/CalibrationTool calibrate kinect-v1 --interactive
 
 # Exit immediately if a command exits with a non-zero status.
 set -e
@@ -68,6 +73,15 @@ while [[ $# -gt 0 ]]; do
 		-d|--debug)
 			BUILD_TYPE=Debug; shift ;;
 		-h|--help)
+			# Auto-detect available targets from CMakeLists.txt
+			AVAILABLE_TARGETS=""
+			if [ -f "CMakeLists.txt" ]; then
+				AVAILABLE_TARGETS=$(grep -E "^add_executable\(" CMakeLists.txt | sed 's/add_executable(\([^[:space:]]*\).*/  \1/' | sort | tr '\n' ' ')
+			fi
+			if [ -z "$AVAILABLE_TARGETS" ]; then
+				AVAILABLE_TARGETS="  SensorBackend SensorViewer CalibrationTool KinectV1Ctl CalderaTests CalderaHeavyTests"
+			fi
+			
 			echo "Usage: $0 [-i|--incremental] [-r|--release|-d|--debug] [TARGET1] [TARGET2] ..."
 			echo ""
 			echo "Options:"
@@ -76,12 +90,8 @@ while [[ $# -gt 0 ]]; do
 			echo "  -d, --debug          Debug build (symbols, no optimization)"
 			echo "  -h, --help          Show this help"
 			echo ""
-			echo "Available targets:"
-			echo "  SensorBackend       Main application"
-			echo "  SensorViewer        Multi-sensor viewer utility"
-
-			echo "  CalderaTests        Test suite (regular)"
-			echo "  CalderaHeavyTests   Heavy/stress & benchmark tests"
+			echo "Available targets (auto-detected):"
+			echo "$AVAILABLE_TARGETS"
 			echo ""
 			echo "Examples:"
 			echo "  $0                           # Build all targets (clean, release)"
@@ -89,16 +99,28 @@ while [[ $# -gt 0 ]]; do
 			echo "  $0 -d                        # Build all targets (clean, debug)"
 			echo "  $0 -i -d CalderaTests        # Build tests (incremental, debug)"
 			echo "  $0 -r SensorViewer           # Build viewer (clean, release)"
+			echo "  $0 CalibrationTool           # Build calibration tool (clean, release)"
 			echo "  $0 -i SensorBackend CalderaTests  # Build specific targets (incremental, release)"
 			exit 0 ;;
-		SensorBackend|SensorViewer|CalderaTests|CalderaHeavyTests)
-			TARGETS+=("$1"); shift ;;
-		*) 
-			echo "Error: Unknown option or target: $1"
-			echo "Available targets: SensorBackend, SensorViewer, CalderaTests, CalderaHeavyTests"
-			echo "Available options: -i (incremental), -r (release), -d (debug), -h (help)"
-			echo "Use -h for help"
-			exit 1 ;;
+		*)
+			# Check if it's a valid target by looking in CMakeLists.txt
+			if [ -f "CMakeLists.txt" ] && grep -q "^add_executable($1" CMakeLists.txt; then
+				TARGETS+=("$1"); shift
+			else
+				echo "Error: Unknown option or target: $1"
+				# Auto-detect available targets for error message
+				AVAILABLE_TARGETS=""
+				if [ -f "CMakeLists.txt" ]; then
+					AVAILABLE_TARGETS=$(grep -E "^add_executable\(" CMakeLists.txt | sed 's/add_executable(\([^[:space:]]*\).*/\1/' | sort | tr '\n' ' ')
+				fi
+				if [ -z "$AVAILABLE_TARGETS" ]; then
+					AVAILABLE_TARGETS="SensorBackend SensorViewer CalibrationTool KinectV1Ctl CalderaTests CalderaHeavyTests"
+				fi
+				echo "Available targets: $AVAILABLE_TARGETS"
+				echo "Available options: -i (incremental), -r (release), -d (debug), -h (help)"
+				echo "Use -h for help"
+				exit 1
+			fi ;;
 	esac
 done
 

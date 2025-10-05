@@ -4,7 +4,7 @@
 //  * Kinect V2 probing uses a minimal open/close cycle to retrieve the serial.
 //  * Kinect V1 probing uses libfreenect enumeration directly (does not spin up capture threads).
 
-#include "tools/SensorEnumerator.h"
+#include "tools/viewer/SensorEnumerator.h"
 #include "hal/KinectV2_Device.h" // needs full definition for open()/getDeviceID()
 
 #include <memory>

@@ -2,7 +2,7 @@
 
 #include <vector>
 #include <string>
-#include "tools/SensorViewerCore.h" // for SensorType enum
+#include "tools/viewer/SensorViewerCore.h" // for SensorType enum
 
 namespace caldera::backend::tools {
 
