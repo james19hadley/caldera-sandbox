@@ -26,6 +26,7 @@ public:
     ProcessingManager(std::shared_ptr<spdlog::logger> orchestratorLogger,
               std::shared_ptr<spdlog::logger> fusionLogger = nullptr,
               float depthToHeightScale = -1.0f); // if <0 auto-resolve (env or default 0.001)
+    ~ProcessingManager();
 
     void setWorldFrameCallback(WorldFrameCallback cb);
 

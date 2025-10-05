@@ -5,6 +5,10 @@
 #include <cstring>
 #include <thread>
 #include <random>
+#include <cstdlib>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 
 using namespace std::chrono_literals;
 namespace caldera::backend::hal {
@@ -15,10 +19,8 @@ SyntheticSensorDevice::SyntheticSensorDevice(const Config& cfg, std::shared_ptr<
 bool SyntheticSensorDevice::open() {
     if (running_.load()) return true;
     running_.store(true);
-    // Precompute base pattern checksum once.
-    std::vector<uint16_t> tmp(static_cast<size_t>(cfg_.width) * cfg_.height);
-    fillPattern(tmp);
-    base_checksum_ = computeCRC(tmp);
+    // Defer checksum computation to first runLoop iteration to avoid early allocation here.
+    base_checksum_ = 0;
     worker_ = std::thread(&SyntheticSensorDevice::runLoop, this);
     if (log_) log_->info("SyntheticSensorDevice started id={} size={}x{} fps={}", cfg_.sensorId, cfg_.width, cfg_.height, cfg_.fps);
     return true;
@@ -28,13 +30,36 @@ void SyntheticSensorDevice::close() {
     if (!running_.exchange(false)) return;
     if (worker_.joinable()) worker_.join();
     if (log_) log_->info("SyntheticSensorDevice stopped id={}", cfg_.sensorId);
+#ifdef __GLIBC__
+    // Clear and shrink persistent reusable buffer to encourage allocator to return pages.
+    reusable_depth_.clear();
+    reusable_depth_.shrink_to_fit();
+#endif
+#ifdef __GLIBC__
+    // Optionally trim allocator caches to improve RSS stability for tight memory tests.
+    const char* trimEnv = std::getenv("CALDERA_SENSOR_TRIM_ON_CLOSE");
+    if (trimEnv && *trimEnv == '1') {
+        malloc_trim(0);
+        if (log_ && log_->should_log(spdlog::level::debug)) {
+            log_->debug("malloc_trim executed on SyntheticSensorDevice close (env enabled)");
+        }
+    }
+#endif
 }
 
 void SyntheticSensorDevice::runLoop() {
     using clock = std::chrono::steady_clock;
     auto period = std::chrono::duration<double>(1.0 / cfg_.fps);
     auto next_tp = clock::now();
-    std::vector<uint16_t> depth(static_cast<size_t>(cfg_.width) * cfg_.height);
+    const size_t pixelCount = static_cast<size_t>(cfg_.width) * cfg_.height;
+    if (reusable_depth_.size() != pixelCount) {
+        reusable_depth_.assign(pixelCount, 0);
+    }
+    RawDepthFrame raw; // small struct reused each loop (vector owns copied depth data)
+    raw.sensorId = cfg_.sensorId;
+    raw.width = cfg_.width;
+    raw.height = cfg_.height;
+    raw.data.clear();
     std::mt19937 rng;
     while (running_.load()) {
         // Pause gate (simple sleep loop to avoid busy spin). Keeps steady_clock origin fresh when resuming.
@@ -42,13 +67,11 @@ void SyntheticSensorDevice::runLoop() {
             std::this_thread::sleep_for(1ms);
         }
         if (!running_.load()) break;
-        fillPattern(depth); // static spatial pattern
-        RawDepthFrame raw;
-        raw.sensorId = cfg_.sensorId;
-        raw.width = cfg_.width;
-        raw.height = cfg_.height;
+        // Fill persistent depth buffer then assign into raw frame's vector (same capacity -> no alloc after first)
+    fillPattern(reusable_depth_);
+    if (base_checksum_ == 0) base_checksum_ = computeCRC(reusable_depth_);
+    raw.data.assign(reusable_depth_.begin(), reusable_depth_.end());
         raw.timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now().time_since_epoch()).count();
-        raw.data = depth; // copy (fine for tests)
         produced_frames_.fetch_add(1, std::memory_order_relaxed);
         bool drop = false;
         uint32_t dropN = fi_dropEveryN_.load(std::memory_order_relaxed);

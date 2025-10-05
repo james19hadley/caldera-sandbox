@@ -73,6 +73,8 @@ private:
     std::atomic<uint64_t> produced_frames_{0};
     std::atomic<uint64_t> emitted_frames_{0};
     std::atomic<uint64_t> dropped_frames_{0};
+    // Persistent reusable frame buffer to allow deterministic capacity management & shrinking on close.
+    std::vector<uint16_t> reusable_depth_;
 };
 
 } // namespace caldera::backend::hal

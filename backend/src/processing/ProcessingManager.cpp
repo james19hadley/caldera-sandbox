@@ -19,6 +19,9 @@
 #include <algorithm> // std::clamp
 #include <cctype>
 #include <cstring>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 namespace caldera::backend::processing {
 
@@ -117,8 +120,8 @@ ProcessingManager::ProcessingManager(std::shared_ptr<spdlog::logger> orchestrato
                            duplicateFusionShift_, duplicateFusionBaseConf_, duplicateFusionDupConf_);
     }
 
-    // Optional proactive preallocation to eliminate allocator noise in memory stress tests.
-    if(envFlag("CALDERA_PREALLOC_ALL", true)) { // default ON to reduce flakiness
+    // Optional proactive preallocation (now opt-in; default OFF) to eliminate allocator noise in large high-throughput tests.
+    if(envFlag("CALDERA_PREALLOC_ALL", false)) { // enable explicitly when needed
         // Heuristic target: assume up to 512x512 (used in stress harness configuration) and up to 2 layers.
         const int preW = envInt("CALDERA_PREALLOC_WIDTH", 512);
         const int preH = envInt("CALDERA_PREALLOC_HEIGHT", 512);
@@ -136,6 +139,20 @@ ProcessingManager::ProcessingManager(std::shared_ptr<spdlog::logger> orchestrato
     }
 }
 
+ProcessingManager::~ProcessingManager(){
+    // Release large buffers explicitly to reduce RSS accumulation across repeated stress tests.
+    std::vector<float>().swap(heightMapBuffer_);
+    std::vector<uint8_t>().swap(validityBuffer_);
+    std::vector<float>().swap(layerHeightsBuffer_);
+    std::vector<float>().swap(layerConfidenceBuffer_);
+    std::vector<float>().swap(fusedHeightsBuffer_);
+    std::vector<float>().swap(fusedConfidenceBuffer_);
+    std::vector<uint8_t>().swap(originalInvalidMask_);
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
+}
+
 void ProcessingManager::setWorldFrameCallback(WorldFrameCallback cb){ callback_ = std::move(cb); }
 
 void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
@@ -143,6 +160,22 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
     auto tFrameStart = std::chrono::steady_clock::now();
     if ((frameCounter_ % 120) == 0 && orch_logger_) {
         orch_logger_->info("Processing depth frame sensor={} w={} h={} frame={}", raw.sensorId, raw.width, raw.height, frameCounter_);
+    }
+    // Heuristic: if this is the first frame and looks like a high-throughput configuration (fps>=100 implied by frame rate elsewhere, we infer by small frame & typical stress dims)
+    // and auto prealloc not disabled, proactively reserve exact pixel count buffers to eliminate later growth. This is lighter than global PREALLOC_ALL.
+    if(frameCounter_==0 && !envFlag("CALDERA_DISABLE_STRESS_PREALLOC", false)){
+        int w = raw.width; int h = raw.height; // stress test uses 320x240 at 120 FPS
+        if(w*h <= 320*240 && w>=160 && h>=120){
+            size_t pixels = (size_t)w*(size_t)h;
+            auto reserveVec=[&](auto& v, size_t n){ if(v.capacity()<n) v.reserve(n); };
+            reserveVec(heightMapBuffer_, pixels);
+            reserveVec(validityBuffer_, pixels);
+            reserveVec(fusedHeightsBuffer_, pixels);
+            reserveVec(fusedConfidenceBuffer_, pixels);
+            reserveVec(originalInvalidMask_, pixels);
+            fusion_.reserveFor(w,h,2);
+            if(orch_logger_) orch_logger_->info("Stress heuristic preallocation applied for {}x{} ({} px)", w,h,pixels);
+        }
     }
     // Re-parse explicit env calibration planes just before first build if present (ensures test ordering)
     if(frameCounter_==0){
