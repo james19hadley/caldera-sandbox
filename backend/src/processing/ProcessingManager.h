@@ -9,6 +9,7 @@
 #include "processing/IHeightMapFilter.h"
 #include "processing/ProcessingTypes.h"
 #include "processing/FusionAccumulator.h"
+#include "processing/ProcessingStages.h" // stage scaffolding (future use)
 
 namespace spdlog { class logger; }
 
@@ -54,7 +55,18 @@ public:
         // Spatial effectiveness sampling (ratio <1 means variance reduced). 0 if not computed.
         float spatialVarianceRatio = 0.0f; // postSpatialVariance / preSpatialVariance (sampled)
         float adaptiveTemporalBlend = 0.0f; // 1 if adaptive temporal blending applied this frame
+        // Edge preservation sampling (ratio close to 1 means edges preserved). 0 if not computed.
+        float spatialEdgePreservationRatio = 0.0f; // postEdgeEnergy / preEdgeEnergy (sampled gradients)
+        // Confidence (M5) aggregates (only valid if confidence map enabled this frame)
+        float meanConfidence = 0.0f;
+        float fractionLowConfidence = 0.0f;
+        float fractionHighConfidence = 0.0f;
     };
+
+    // Provide an alias struct so stage scaffolding (which cannot include this header to avoid cycles)
+    // can refer to an opaque-compatible metrics object. Layout compatibility is not yet required
+    // because stages are not instantiated; this acts as a forward anchor for future refactor.
+    struct ProcessingManagerStabilityMetricsOpaque : public StabilityMetrics {};
 
     const StabilityMetrics& lastStabilityMetrics() const { return lastStabilityMetrics_; }
 
@@ -121,6 +133,19 @@ private:
     float adaptiveTemporalScale_ = 1.0f; // >1 enables extra temporal smoothing when unstable
     std::vector<float> prevFilteredHeight_; // buffer after spatial (pre-fusion) from previous frame
     bool prevFilteredValid_ = false;
+    // Confidence map support (M5 MVP)
+    bool confidenceEnabled_ = false; // env CALDERA_ENABLE_CONFIDENCE_MAP
+    std::vector<float> confidenceMap_; // same dimensions as height map when enabled
+    float confWeightS_ = 0.6f; // wS
+    float confWeightR_ = 0.25f; // wR
+    float confWeightT_ = 0.15f; // wT
+    float confLowThresh_ = 0.3f;
+    float confHighThresh_ = 0.8f;
+    // Stage-oriented architecture (M5 scaffolding): not yet driving execution.
+    // Will be populated with concrete stage objects (build, plane_validate, temporal, etc.)
+    // in subsequent steps without breaking existing processRawDepthFrame logic.
+    std::vector<std::unique_ptr<IProcessingStage>> stages_; // unused until M5 Step 2
+    AdaptiveState adaptiveState_; // shared state for future adaptive_control + spatial stages
 };
 
 } // namespace caldera::backend::processing

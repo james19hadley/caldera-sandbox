@@ -1,6 +1,6 @@
 # Processing Layer Implementation Working Plan (Assistant Draft)
 
-Last Updated: 2025-10-05
+Last Updated: 2025-10-05 (post fastgauss + edge metric + strong kernel selection + perf bench)
 Owner: AI assistant (implementation companion)
 Scope: Concrete, incremental plan to evolve the current processing layer from basic depth-to-height conversion to a robust, multi-stage, validated, adaptive perception pipeline.
 
@@ -20,7 +20,7 @@ Scope: Concrete, incremental plan to evolve the current processing layer from ba
 | DepthCorrector | Basic placeholder | Uniform radial factor only, no per-pixel table load |
 | CoordinateTransform | Implemented + tested | Supports intrinsics + base plane; fusion scaffold present |
 | TemporalFilter | Production | Mirrors SARndbox statistics / hysteresis semantics (world-space heights) |
-| Spatial Filtering | Implemented (Phase 1) | Separable [1 2 1] kernel, NaN-aware, env gated `CALDERA_ENABLE_SPATIAL_FILTER` / adaptive gating in M4 |
+| Spatial Filtering | Implemented (Phase 1 + alt kernels) | Separable [1 2 1] kernel, NaN-aware, alt kernels: wide5 + fastgauss (env selectable), adaptive gating in M4 |
 | Plane Validation | Implemented (world-space) | Zero-depth reject + min/max plane bounds (env fallback + profile override); image-space parity deferred |
 | Invalid Pixel Metrics | Active | Valid/invalid counts logged per frame (used in tests) |
 | ProcessingManager | Enhanced | Point cloud build, plane validation, temporal + optional spatial, fusion passthrough, stability metrics, adaptive mode, profile autoload |
@@ -72,7 +72,7 @@ Deferred:
  - Integration test chaining calibrated planes + spatial filter (after adaptive hysteresis to avoid churn).
  - Optional additional env variable `CALDERA_FALLBACK_PLANES` style consolidated parser (currently separate min/max vars).
 
-### M4: Adaptive Filtering (Spatial + Temporal Hooks)
+### M4: Adaptive Filtering (Spatial + Temporal Hooks + Edge Metric)
 Goal: Dynamically enable / strengthen spatial smoothing only when stability is poor; introduce foundation for temporal aggressiveness scaling without always-on blur.
 
 Status (2025-10-05 FINAL):
@@ -80,22 +80,23 @@ IMPLEMENTED (Phase 1 + Phase 2 complete):
 * Adaptive spatial gating (mode 2) using prior frame stability / variance thresholds.
 * Hysteresis streak control (`CALDERA_ADAPTIVE_ON_STREAK`, `CALDERA_ADAPTIVE_OFF_STREAK`).
 * Strong mode escalation (double-pass classic) governed by `CALDERA_ADAPTIVE_STRONG_MULT`, `CALDERA_ADAPTIVE_STRONG_STAB_FRACTION`, `CALDERA_ADAPTIVE_STRONG_DOUBLE_PASS`.
-* Alternative kernel experiment (wide5 `[1 4 6 4 1]`) via `CALDERA_SPATIAL_KERNEL_ALT=wide5` retained as optional (not default). Decision: baseline = classic single-pass; strong = classic double-pass (wide5 stays experimental until edge metric or visual review justifies promotion).
+* Alternative kernel experiment (wide5 `[1 4 6 4 1]`) via `CALDERA_SPATIAL_KERNEL_ALT=wide5` retained as optional (not default). Decision: baseline = classic single-pass; strong = classic double-pass (wide5 stays experimental; fastgauss added later – see below for edge metric validation).
 * Sampling variance effectiveness metric `spatialVarianceRatio` (sampled pre/post) behind metrics gating.
+* Edge preservation gradient sampling metric `spatialEdgePreservationRatio` implemented (sampled on same deterministic subset) enabling quantitative comparison of kernels (classic/wide5/fastgauss + strong variants).
+* Adaptive temporal scaling hook: optional blend factor when unstable controlled by `CALDERA_ADAPTIVE_TEMPORAL_SCALE` (applies additional smoothing blend to stabilize transition frames). Test: `AdaptiveTemporalScaleTest.BlendsWhenUnstable`.
+* Performance benchmark harness (lightweight) added: `SpatialKernelBenchmark.BasicComparativeTiming` measuring ms/frame + variance & edge ratios across kernels.
 * Extended metrics: `adaptiveSpatial`, `adaptiveStrong`, `adaptiveStreak`, plus `adaptiveTemporalBlend` for new temporal hook.
 * Adaptive temporal scaling hook: optional blend factor when unstable controlled by `CALDERA_ADAPTIVE_TEMPORAL_SCALE` (applies additional smoothing blend to stabilize transition frames). Test: `AdaptiveTemporalScaleTest.BlendsWhenUnstable`.
 * Logging for enable/disable/strong transitions.
 * All adaptive + sampling + kernel tests passing: `AdaptiveSpatialTest.*`, `AdaptiveSpatialPhase2Test.*`, `SpatialSamplingMetricTest`, `SpatialKernelWide5Test.*`, `AdaptiveTemporalScaleTest.*`.
 
 Deferred (M4-scoped) / intentionally omitted:
-* Edge preservation gradient metric (may be added later if kernel promotion reconsidered).
 * Diagnostic export channel (ring buffer) beyond logging.
-* `CALDERA_ADAPTIVE_STRONG_KERNEL` override (not needed after deciding on classic double-pass default; could be added trivially if requirements change).
+* SIMD acceleration of spatial passes.
+* Additional strong-mode heuristics beyond current stability fraction and mult.
 
-Related deferrals tracked under M3 or future milestones: depth scale override; consolidated plane fallback parser.
-
-### M4: Adaptive Parameter Hooks (Foundation)
-Goal: Runtime tuning scaffolding (no algorithmic complexity yet).
+FastGaussian & Edge Metric Note:
+FastGaussian kernel integration (select via `CALDERA_SPATIAL_KERNEL_ALT=fastgauss` and sigma via `CALDERA_FASTGAUSS_SIGMA`) plus edge preservation metric landed after M5 MVP; confidence formula unchanged but metrics can inform future weighting adjustments (e.g. penalize over-smoothed edges).
 
 ### M5: Confidence Map (Derived Surface)
 Goal: Emit per-pixel confidence (0..1 float) enabling downstream visualization, filtering, and fusion weighting.
@@ -122,14 +123,16 @@ Clamping & Edge Conditions:
 * If adaptiveTemporalBlend not engaged, T=0.
 * If pixel later gets per-pixel temporal stats, replace S with per-pixel stability.
 
-Data Structure:
-* New float buffer `confidenceMap_` aligned with height map dimensions; reused per frame.
-* Populated post-spatial (so it reflects final smoothing state) before fusion.
-* Exported optionally behind `CALDERA_ENABLE_CONFIDENCE_MAP` (env, default 0). When disabled, buffer not allocated / not written.
+Data Structure (Implemented):
+* Float buffer `confidenceMap_` aligned with height map dimensions; reused per frame (allocated lazily when first enabled frame processed).
+* Computation occurs AFTER metrics (stabilityRatio, spatialVarianceRatio, adaptiveTemporalBlend) are updated— avoids initial frame always zero.
+* Currently internal-only; external export / API accessor deferred to M5 Phase 2 or M6 synergy.
+* Guarded by `CALDERA_ENABLE_CONFIDENCE_MAP` (default off) — no steady-state allocations after first enable.
 
-Metrics & Logging:
-* Frame-level aggregates: meanConfidence, fractionLow (<0.3), fractionHigh (>0.8) when enabled (optional metrics flag reuse).
-* Add to `StabilityMetrics` struct only aggregates (not full map) to avoid footprint.
+Metrics & Logging (Implemented):
+* Aggregates in `StabilityMetrics`: meanConfidence, fractionLowConfidence (<0.3), fractionHighConfidence (>0.8).
+* Invalid pixels produce c=0 and contribute to low fraction denominator.
+* When disabled: aggregates forced to 0 (explicit, no stale state).
 
 Future Enhancements (defer):
 * Per-pixel temporal EMA variance to refine S locally.
@@ -137,21 +140,24 @@ Future Enhancements (defer):
 * Confidence decay for persistently invalid → recently revalidated transitions.
 * Fusion weighting: incorporate into M6 Phase 2 as weights for multi-sensor blending.
 
-Testing Plan (Immediate):
-1. Unit test: invalid pixels yield confidence 0.
-2. When stabilityRatio high and spatialVarianceRatio shows improvement (R<1), confidence increases vs synthetic noisy unstable frame.
-3. Adaptive temporal engaged increases mean confidence moderately (within defined cap) vs same frame without T.
-4. Disabled path (env off) leaves metrics aggregates zero/unset.
+Testing Implemented:
+1. Disabled path zero aggregates.
+2. Invalid pixels zero, valid >0.
+3. Higher stability on second frame raises confidence.
+4. Spatial filtering path (R term active) yields >= confidence compared to run with R suppressed.
+5. Temporal blend increases confidence after instability.
+All in `ConfidenceMapTest` (5 tests) passing.
 
 Risks:
 * Using frame-level scalars for all pixels may mask localized instability → acceptable for MVP; document and iterate.
 * Weight tuning may require empirical adjustments; keep env overrides for wS,wR,wT (optional env: `CALDERA_CONFIDENCE_WEIGHTS` "wS,wR,wT").
 
-Acceptance Criteria MVP:
-* Confidence map allocation only when enabled.
-* All MVP tests passing.
-* No added allocations in steady-state hot path beyond buffer reuse.
-* Mean confidence monotonic with increasing stabilityRatio in synthetic tests.
+Acceptance Criteria MVP (Met):
+* Allocation only when enabled + reuse.
+* All confidence tests green.
+* First frame can achieve non-zero confidence if input stable.
+* Stability monotonic trend confirmed in test.
+Remaining (Phase 2): external exposure, fusion weighting, optional per-pixel temporal variance.
 
 ### M6: Multi-Sensor Fusion (Foundational Architecture)
 Goal: Allow injecting second sensor path (mock) and fusing.
@@ -187,6 +193,7 @@ struct StageTimings { uint64_t tDepthUS=0, tTransformUS=0, tValidateUS=0, tTempo
 | test_processing_spatial_filter_impulse | Unit | Kernel correctness |
 | test_processing_adaptive_window | Unit | Adaptive tuning logic |
 | test_processing_confidence_variance | Unit | Confidence mapping validity |
+| SpatialKernelBenchmark.BasicComparativeTiming | Perf | Kernel timing + variance/edge ratios (lightweight benchmark) |
 | test_processing_fusion_min | Unit | Min-z fusion correctness |
 | test_processing_pipeline_chain | Integration | End-to-end full stack |
 
@@ -216,27 +223,176 @@ Stability Delta Instrumentation (Planned M2 extension):
 | Buffer allocation churn | Latency | Pre-size & reuse |
 | Over-optimization early | Wasted time | Profile after M2 |
 
-## 8. Environment & Feature Flags (Proposed)
-| Env Var | Effect | Default |
-|---------|--------|---------|
-| CALDERA_ENABLE_SPATIAL_FILTER | Enable SpatialFilter stage | 0 |
-| CALDERA_SPATIAL_KERNEL | Kernel variant | classic |
-| CALDERA_TEMPORAL_ADAPTIVE | Adaptive window tuning | 0 |
-| CALDERA_PROCESSING_TRACE | Verbose invalid pixel trace | 0 |
-| CALDERA_VALIDATE_IMAGE_SPACE | Legacy image-space plane clipping | 0 |
+## 8. Environment & Feature Flags (Implemented + Planned)
+| Env Var | Effect | Default | Status |
+|---------|--------|---------|--------|
+| CALDERA_ENABLE_SPATIAL_FILTER | Enable static spatial filter | 0 | Implemented |
+| CALDERA_SPATIAL_KERNEL_ALT | Alternative spatial kernel (wide5 / fastgauss) | classic | Implemented (wide5 + fastgauss) |
+| CALDERA_ADAPTIVE_MODE | Adaptive spatial gating mode | 0 | Implemented |
+| CALDERA_ADAPTIVE_ON_STREAK / OFF_STREAK | Hysteresis thresholds | 2 / 2 | Implemented |
+| CALDERA_ADAPTIVE_STRONG_MULT | Strong escalation scale | 2.0 | Implemented |
+| CALDERA_ADAPTIVE_STRONG_STAB_FRACTION | Stability fraction gating strong | 0.5 | Implemented |
+| CALDERA_ADAPTIVE_STRONG_DOUBLE_PASS | Enable classic double-pass strong | 1 | Implemented |
+| CALDERA_ADAPTIVE_TEMPORAL_SCALE | Temporal blend intensity | 0 | Implemented |
+| CALDERA_ENABLE_CONFIDENCE_MAP | Enable confidence map | 0 | Implemented |
+| CALDERA_CONFIDENCE_WEIGHTS | Override weights ("S=0.6,R=0.25,T=0.15") | unset | Implemented |
+| CALDERA_PROCESSING_STABILITY_METRICS | Enable sampling + metrics | 0 | Implemented |
+| CALDERA_CALIB_SENSOR_ID / CALDERA_CALIB_DIR | Calibration profile autoload | unset | Implemented |
+| CALDERA_ELEV_MIN_OFFSET_M / CALDERA_ELEV_MAX_OFFSET_M | Plane fallback offsets | 0 / 0 | Implemented |
+| CALDERA_VALIDATE_IMAGE_SPACE | Legacy image-space clipping | 0 | Planned |
+| CALDERA_ADAPTIVE_STRONG_KERNEL | Kernel variant for strong (classic_double|wide5|fastgauss) | classic_double | Implemented |
+| CALDERA_FASTGAUSS_SIGMA | Sigma parameter for fastgauss kernel | 1.0 | Implemented |
+| CALDERA_PIPELINE | Declarative stage order (e.g. "temporal,spatial,confidence,fusion") | unset | Planned |
+| CALDERA_PIPELINE_STAGE_OPTS | Per-stage key=val overrides | unset | Planned |
 
-## 9. Immediate Next Action
-1. Implement Confidence Map MVP (buffer allocation, per-pixel fill using frame-level scalars + weights env parsing, aggregates).
-2. Add tests: invalid->0, stability influence, spatial improvement influence, adaptive temporal influence (gated), disabled path no-op.
-3. Extend `StabilityMetrics` with meanConfidence / fractionLow / fractionHigh (only when confidence enabled) + log line.
-4. Optional: introduce `CALDERA_CONFIDENCE_WEIGHTS` parsing now for flexibility.
-5. (Deferred after MVP) Consider edge gradient sampling; only proceed if kernel promotion decision revisited.
+## 9. Immediate Next Actions (Refreshed Post FastGauss / Edge Metric / Strong Kernel)
+1. Prototype stage orchestration: parse `CALDERA_PIPELINE`, construct ordered stage vector (temporal, spatial, confidence, fusion) with fallback to legacy order when unset.
+2. Confidence externalization: public accessor + optional export hook (log or diagnostic API). Defer shared memory until fusion weighting spec finalized.
+3. Fusion Phase 1 (min-z) implementation + tests; integrate with existing FusionAccumulator scaffold.
+4. Fusion Phase 2 design draft: confidence-weighted blending strategy (requires map exposure) – prepare spec before coding.
+5. Documentation sync: update README / design docs describing new env flags (fastgauss, strong kernel selection, edge metric) and performance benchmark usage.
+6. Optional: Add CSV export / multi-iteration mode to `SpatialKernelBenchmark` (env `CALDERA_BENCH_ITER`) for more stable timing distributions.
+7. Investigate per-pixel temporal variance (memory layout & incremental update cost model) – decide go/no-go for Confidence Phase 2.
 
-## 10. Open Questions
-1. Export confidence map now or defer?
-2. Need per-sensor extrinsics this quarter?
-3. Raw saturation heuristic?
-4. SIMD validation worth early effort?
+## 5. Testing Matrix (Initial Focus)
+| Test | Type | Purpose |
+|------|------|---------|
+| test_processing_invalid_pixels_basic | Unit | Range + plane invalidation accuracy |
+| test_processing_invalid_pixels_legacy_mode (phase 1.5) | Unit | Image vs world parity |
+| test_processing_temporal_stability_static | Existing | Regression guard |
+| test_processing_spatial_filter_impulse | Unit | Kernel correctness |
+| test_processing_adaptive_window | Unit | Adaptive tuning logic |
+| test_processing_confidence_variance | Unit | Confidence mapping validity |
+| SpatialKernelBenchmark.BasicComparativeTiming | Perf | Kernel timing + variance/edge ratios (lightweight benchmark) |
+| test_processing_fusion_min | Unit | Min-z fusion correctness |
+| test_processing_pipeline_chain | Integration | End-to-end full stack |
+
+Deferred Addition (planned, not yet implemented):
+| test_processing_temporal_spatial_chain | Integration | Verify combined Temporal+Spatial preserves stability & reduces speckle |
+
+## 6. Metrics & Instrumentation Plan
+Counters: invalidPixelsFrame, stabilityRatio, avgVariance, processingTimeTotalUS, stage timings, fusionOverheadUS.
+
+Stability Delta Instrumentation (Planned M2 extension):
+- Purpose: quantify improvement from each filter stage (e.g., variance reduction ratio, fraction of pixels with |delta| < epsilon).
+- Approach: sample (not full frame) a fixed-size stratified subset (e.g., 1024 indices) before & after each filter.
+- Metrics stored in ring buffer length N (e.g., 120) for rolling averages.
+- Overhead control: gated by env `CALDERA_PROCESSING_STABILITY_METRICS=1` (default off). When off, zero cost beyond static flag check.
+- Data points per sampled frame:
+	* preTemporalVariance, postTemporalVariance
+	* preSpatialVariance, postSpatialVariance (if spatial enabled)
+	* stablePixelRatioBefore/After (|delta| < eps)
+- Export path: aggregated every 120 frames in single log line or exposed via future diagnostics API.
+
+## 7. Risk Register (Brief)
+| Risk | Impact | Mitigation |
+|------|--------|-----------|
+| Divergence from legacy plane semantics | Subtle diffs | Optional image-space mode |
+| NaN propagation in filters | Artifact streaks | Explicit NaN handling path |
+| Fusion timing mismatch | Ghosting | Add sync window + timeout |
+| Buffer allocation churn | Latency | Pre-size & reuse |
+| Over-optimization early | Wasted time | Profile after M2 |
+
+## 8. Environment & Feature Flags (Implemented + Planned)
+| Env Var | Effect | Default | Status |
+|---------|--------|---------|--------|
+| CALDERA_ENABLE_SPATIAL_FILTER | Enable static spatial filter | 0 | Implemented |
+| CALDERA_SPATIAL_KERNEL_ALT | Alternative spatial kernel (wide5 / fastgauss) | classic | Implemented (wide5 + fastgauss) |
+| CALDERA_ADAPTIVE_MODE | Adaptive spatial gating mode | 0 | Implemented |
+| CALDERA_ADAPTIVE_ON_STREAK / OFF_STREAK | Hysteresis thresholds | 2 / 2 | Implemented |
+| CALDERA_ADAPTIVE_STRONG_MULT | Strong escalation scale | 2.0 | Implemented |
+| CALDERA_ADAPTIVE_STRONG_STAB_FRACTION | Stability fraction gating strong | 0.5 | Implemented |
+| CALDERA_ADAPTIVE_STRONG_DOUBLE_PASS | Enable classic double-pass strong | 1 | Implemented |
+| CALDERA_ADAPTIVE_TEMPORAL_SCALE | Temporal blend intensity | 0 | Implemented |
+| CALDERA_ENABLE_CONFIDENCE_MAP | Enable confidence map | 0 | Implemented |
+| CALDERA_CONFIDENCE_WEIGHTS | Override weights ("S=0.6,R=0.25,T=0.15") | unset | Implemented |
+| CALDERA_PROCESSING_STABILITY_METRICS | Enable sampling + metrics | 0 | Implemented |
+| CALDERA_CALIB_SENSOR_ID / CALDERA_CALIB_DIR | Calibration profile autoload | unset | Implemented |
+| CALDERA_ELEV_MIN_OFFSET_M / CALDERA_ELEV_MAX_OFFSET_M | Plane fallback offsets | 0 / 0 | Implemented |
+| CALDERA_VALIDATE_IMAGE_SPACE | Legacy image-space clipping | 0 | Planned |
+| CALDERA_ADAPTIVE_STRONG_KERNEL | Kernel variant for strong (classic_double|wide5|fastgauss) | classic_double | Implemented |
+| CALDERA_FASTGAUSS_SIGMA | Sigma parameter for fastgauss kernel | 1.0 | Implemented |
+| CALDERA_PIPELINE | Declarative stage order (e.g. "temporal,spatial,confidence,fusion") | unset | Planned |
+| CALDERA_PIPELINE_STAGE_OPTS | Per-stage key=val overrides | unset | Planned |
+
+## 9. Immediate Next Actions (Refreshed Post FastGauss / Edge Metric / Strong Kernel)
+1. Prototype stage orchestration: parse `CALDERA_PIPELINE`, construct ordered stage vector (temporal, spatial, confidence, fusion) with fallback to legacy order when unset.
+2. Confidence externalization: public accessor + optional export hook (log or diagnostic API). Defer shared memory until fusion weighting spec finalized.
+3. Fusion Phase 1 (min-z) implementation + tests; integrate with existing FusionAccumulator scaffold.
+4. Fusion Phase 2 design draft: confidence-weighted blending strategy (requires map exposure) – prepare spec before coding.
+5. Documentation sync: update README / design docs describing new env flags (fastgauss, strong kernel selection, edge metric) and performance benchmark usage.
+6. Optional: Add CSV export / multi-iteration mode to `SpatialKernelBenchmark` (env `CALDERA_BENCH_ITER`) for more stable timing distributions.
+7. Investigate per-pixel temporal variance (memory layout & incremental update cost model) – decide go/no-go for Confidence Phase 2.
+
+## 5. Testing Matrix (Initial Focus)
+| Test | Type | Purpose |
+|------|------|---------|
+| test_processing_invalid_pixels_basic | Unit | Range + plane invalidation accuracy |
+| test_processing_invalid_pixels_legacy_mode (phase 1.5) | Unit | Image vs world parity |
+| test_processing_temporal_stability_static | Existing | Regression guard |
+| test_processing_spatial_filter_impulse | Unit | Kernel correctness |
+| test_processing_adaptive_window | Unit | Adaptive tuning logic |
+| test_processing_confidence_variance | Unit | Confidence mapping validity |
+| SpatialKernelBenchmark.BasicComparativeTiming | Perf | Kernel timing + variance/edge ratios (lightweight benchmark) |
+| test_processing_fusion_min | Unit | Min-z fusion correctness |
+| test_processing_pipeline_chain | Integration | End-to-end full stack |
+
+Deferred Addition (planned, not yet implemented):
+| test_processing_temporal_spatial_chain | Integration | Verify combined Temporal+Spatial preserves stability & reduces speckle |
+
+## 6. Metrics & Instrumentation Plan
+Counters: invalidPixelsFrame, stabilityRatio, avgVariance, processingTimeTotalUS, stage timings, fusionOverheadUS.
+
+Stability Delta Instrumentation (Planned M2 extension):
+- Purpose: quantify improvement from each filter stage (e.g., variance reduction ratio, fraction of pixels with |delta| < epsilon).
+- Approach: sample (not full frame) a fixed-size stratified subset (e.g., 1024 indices) before & after each filter.
+- Metrics stored in ring buffer length N (e.g., 120) for rolling averages.
+- Overhead control: gated by env `CALDERA_PROCESSING_STABILITY_METRICS=1` (default off). When off, zero cost beyond static flag check.
+- Data points per sampled frame:
+	* preTemporalVariance, postTemporalVariance
+	* preSpatialVariance, postSpatialVariance (if spatial enabled)
+	* stablePixelRatioBefore/After (|delta| < eps)
+- Export path: aggregated every 120 frames in single log line or exposed via future diagnostics API.
+
+## 7. Risk Register (Brief)
+| Risk | Impact | Mitigation |
+|------|--------|-----------|
+| Divergence from legacy plane semantics | Subtle diffs | Optional image-space mode |
+| NaN propagation in filters | Artifact streaks | Explicit NaN handling path |
+| Fusion timing mismatch | Ghosting | Add sync window + timeout |
+| Buffer allocation churn | Latency | Pre-size & reuse |
+| Over-optimization early | Wasted time | Profile after M2 |
+
+## 8. Environment & Feature Flags (Implemented + Planned)
+| Env Var | Effect | Default | Status |
+|---------|--------|---------|--------|
+| CALDERA_ENABLE_SPATIAL_FILTER | Enable static spatial filter | 0 | Implemented |
+| CALDERA_SPATIAL_KERNEL_ALT | Alternative spatial kernel (wide5 / fastgauss) | classic | Implemented (wide5 + fastgauss) |
+| CALDERA_ADAPTIVE_MODE | Adaptive spatial gating mode | 0 | Implemented |
+| CALDERA_ADAPTIVE_ON_STREAK / OFF_STREAK | Hysteresis thresholds | 2 / 2 | Implemented |
+| CALDERA_ADAPTIVE_STRONG_MULT | Strong escalation scale | 2.0 | Implemented |
+| CALDERA_ADAPTIVE_STRONG_STAB_FRACTION | Stability fraction gating strong | 0.5 | Implemented |
+| CALDERA_ADAPTIVE_STRONG_DOUBLE_PASS | Enable classic double-pass strong | 1 | Implemented |
+| CALDERA_ADAPTIVE_TEMPORAL_SCALE | Temporal blend intensity | 0 | Implemented |
+| CALDERA_ENABLE_CONFIDENCE_MAP | Enable confidence map | 0 | Implemented |
+| CALDERA_CONFIDENCE_WEIGHTS | Override weights ("S=0.6,R=0.25,T=0.15") | unset | Implemented |
+| CALDERA_PROCESSING_STABILITY_METRICS | Enable sampling + metrics | 0 | Implemented |
+| CALDERA_CALIB_SENSOR_ID / CALDERA_CALIB_DIR | Calibration profile autoload | unset | Implemented |
+| CALDERA_ELEV_MIN_OFFSET_M / CALDERA_ELEV_MAX_OFFSET_M | Plane fallback offsets | 0 / 0 | Implemented |
+| CALDERA_VALIDATE_IMAGE_SPACE | Legacy image-space clipping | 0 | Planned |
+| CALDERA_ADAPTIVE_STRONG_KERNEL | Kernel variant for strong (classic_double|wide5|fastgauss) | classic_double | Implemented |
+| CALDERA_FASTGAUSS_SIGMA | Sigma parameter for fastgauss kernel | 1.0 | Implemented |
+| CALDERA_PIPELINE | Declarative stage order (e.g. "temporal,spatial,confidence,fusion") | unset | Planned |
+| CALDERA_PIPELINE_STAGE_OPTS | Per-stage key=val overrides | unset | Planned |
+
+## 9. Immediate Next Actions (Refreshed Post FastGauss / Edge Metric / Strong Kernel)
+1. Prototype stage orchestration: parse `CALDERA_PIPELINE`, construct ordered stage vector (temporal, spatial, confidence, fusion) with fallback to legacy order when unset.
+2. Confidence externalization: public accessor + optional export hook (log or diagnostic API). Defer shared memory until fusion weighting spec finalized.
+3. Fusion Phase 1 (min-z) implementation + tests; integrate with existing FusionAccumulator scaffold.
+4. Fusion Phase 2 design draft: confidence-weighted blending strategy (requires map exposure) – prepare spec before coding.
+5. Documentation sync: update README / design docs describing new env flags (fastgauss, strong kernel selection, edge metric) and performance benchmark usage.
+6. Optional: Add CSV export / multi-iteration mode to `SpatialKernelBenchmark` (env `CALDERA_BENCH_ITER`) for more stable timing distributions.
+7. Investigate per-pixel temporal variance (memory layout & incremental update cost model) – decide go/no-go for Confidence Phase 2.
 
 ## 11. Changelog (Working)
 - 2025-10-05: Initial draft.
@@ -252,14 +408,8 @@ Stability Delta Instrumentation (Planned M2 extension):
 - 2025-10-05: Added alternative wide5 spatial kernel experiment under env flag + tests.
 - 2025-10-05: M4 finalized (adaptive spatial + temporal hook + metrics). Wide5 remains experimental; classic double-pass is strong mode default.
 - 2025-10-05: Drafted M5 Confidence Map specification (MVP formula, inputs, testing plan).
-
-## 12. Multi-Sensor Architecture (Design Addendum)
-(unchanged from prior draft; retained for context)
-
-## 13. Dead / Defective Pixel Handling Rationale
-(unchanged; retained)
-
-## 14. Ideas / Enhancements Log
-(unchanged; retained)
-
-(End of working plan)
+- 2025-10-05: Implemented M5 confidence MVP (buffer, weights parsing, post-metrics computation) + 5 passing tests.
+- 2025-10-05: Added plan for FastGaussianBlur integration + stage orchestration and kernel selection flags.
+- 2025-10-05: Integrated FastGaussianBlur selectable kernel (env `CALDERA_SPATIAL_KERNEL_ALT=fastgauss`, sigma via `CALDERA_FASTGAUSS_SIGMA`), added edge preservation metric (`spatialEdgePreservationRatio`).
+- 2025-10-05: Added adaptive strong kernel selection env (`CALDERA_ADAPTIVE_STRONG_KERNEL`) supporting classic_double|wide5|fastgauss with tests.
+- 2025-10-05: Added performance benchmark `SpatialKernelBenchmark.BasicComparativeTiming` to light test target (timing + var/edge ratios).

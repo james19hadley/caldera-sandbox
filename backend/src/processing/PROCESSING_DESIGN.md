@@ -1,28 +1,185 @@
-# Processing Layer Design for Project Caldera
+# Processing Layer Design (Stage-Oriented Architecture)
 
-## Design Philosophy
+Last Updated: 2025-10-05
+Status: Working design capturing current CPU implementation + near-term (M5) evolution.
 
-Our processing layer will modernize and enhance the proven approaches from SARndbox-2.8 while addressing its architectural limitations. We aim to create a modular, GPU-accelerated, multi-sensor capable system that maintains the stability and reliability of the legacy approach.
+## 1. Rationale & Direction
+Legacy (SARndbox) pipeline is implicitly ordered, hard-wired, and always-on for certain filters (spatial). We need:
+* Declarative ordering (like listing layers in a neural network model definition).
+* Hot-path efficiency (O(N) pixel loops dominate; orchestration overhead must be negligible).
+* Extensibility (insert experimental stages: alternative kernels, diagnostic exports, confidence map) with minimal code churn.
+* Adaptive logic separated from transform kernels.
+
+GPU ambitions remain long-term; current focus is a robust CPU stage graph that can map 1:1 to future GPU node kernels.
+
+## 2. Stage Model
+### 2.1 Interfaces
+```
+struct FrameContext {
+    std::vector<float>& height;          // height/elevation buffer in-place
+    std::vector<uint8_t>& validityMask;  // 1=valid, 0=invalid (hard invalid)
+    std::vector<float>* confidence;      // optional confidence map (nullptr if disabled)
+    ProcessingManager::StabilityMetrics& metrics; // frame-level metrics aggregate
+    AdaptiveState& adaptive;             // gating flags + historical stability
+    const TransformParameters& transform;// plane / scale params
+    uint32_t width;
+    uint32_t heightPx;
+    uint64_t frameId;
+};
+
+struct AdaptiveState {
+    bool spatialActive=false;
+    bool strongActive=false;
+    uint32_t unstableStreak=0;
+    uint32_t stableStreak=0;
+    float lastStability=0.f;
+    float lastVariance=0.f;
+    float temporalBlendApplied=0.f; // 1.0 if extra temporal blend applied this frame
+};
+
+class IProcessingStage {
+public:
+    virtual ~IProcessingStage() = default;
+    virtual const char* name() const = 0;
+    virtual void apply(FrameContext& ctx) = 0; // may mutate height/confidence/metrics/adaptive
+};
+```
+
+### 2.2 Stage Categories
+| Category | Example | Role |
+|----------|---------|------|
+| Geometry | build, plane_validate | Raw depth → world height + plane clipping |
+| Temporal | temporal | EMA/hysteresis smoothing |
+| Control  | adaptive_control | Updates AdaptiveState flags (no pixel mutate) |
+| Spatial  | spatial(classic), spatial(fastgauss) | Conditional smoothing based on flags |
+| Derived  | confidence | Per-pixel confidence & aggregates |
+| Fusion   | fuse | Multi-sensor combination (Phase 0 passthrough) |
+| Diagnostics | diagnostics | Future: export sampling / ring buffer |
+
+### 2.3 Conditional Execution (`when`)
+Each stage declares a condition: `always | adaptive | adaptiveStrong | never`.
+AdaptiveControlStage sets `adaptive.spatialActive` and `adaptive.strongActive` based on previous frame metrics + hysteresis thresholds.
+
+## 3. Pipeline Specification Grammar
+Environment variable: `CALDERA_PIPELINE`
+```
+PIPELINE := STAGE ("," STAGE)*
+STAGE := IDENTIFIER [ "(" PARAM_LIST ")" ]
+PARAM_LIST := PARAM ("," PARAM)*
+PARAM := KEY "=" VALUE
+```
+Example:
+```
+CALDERA_PIPELINE=build,plane_validate,temporal,adaptive_control,\
+    spatial(mode=classic,when=adaptive),\
+    spatial(mode=fastgauss,sigma=1.6,when=adaptiveStrong),confidence,fuse
+```
+If absent → default pipeline (Adaptive Balanced) is used.
+
+### 3.1 Spatial Stage Parameters
+* mode=`classic|wide5|fastgauss`
+* passes=`N` (classic/wide5 only; replicates double-pass strong mode)
+* sigma=`float` (fastgauss only)
+* when=`always|adaptive|adaptiveStrong|never`
+
+### 3.2 Confidence Stage Parameters
+* weights=`wS,wR,wT` (override env)  
+* low=`float` low threshold (default 0.3)  
+* high=`float` high threshold (default 0.8)  
+* when=always (but internally no-op if `CALDERA_ENABLE_CONFIDENCE_MAP=0`)
+
+## 4. Default Pipelines
+### 4.1 Adaptive Balanced (current default)
+```
+build,plane_validate,temporal,adaptive_control,\
+spatial(mode=classic,when=adaptive),\
+spatial(mode=classic,passes=2,when=adaptiveStrong),confidence,fuse
+```
+### 4.2 Legacy Emulation
+```
+build,plane_validate,temporal,spatial(mode=classic,when=always),fuse
+```
+### 4.3 High Smooth Variant
+```
+build,plane_validate,temporal,adaptive_control,\
+spatial(mode=classic,when=adaptive),\
+spatial(mode=fastgauss,sigma=1.8,when=adaptiveStrong),confidence
+```
+
+## 5. Confidence Map (M5 Phase A)
+Inputs (frame scope MVP): Validity V, stabilityRatio S, spatialVarianceRatio R (fallback 1), adaptiveTemporalBlend T.
+Weights: wS=0.6, wR=0.25, wT=0.15 (env `CALDERA_CONFIDENCE_WEIGHTS` or stage param). Absent component → drop weight + renormalize.
+Formula:
+```
+if !V -> 0
+c = (wS*S + wR*(1 - clamp(R,0,1)) + wT*T)/(wS+wR+wT)
+```
+Clamp to [0,1].
+Aggregates stored in metrics: meanConfidence, fractionLow (<low), fractionHigh (>high).
+Env gating: `CALDERA_ENABLE_CONFIDENCE_MAP=1`.
+Future: per-pixel temporal variance to replace global S; edge-aware adjustment.
+
+## 6. Fast Gaussian Integration
+SpatialStage chooses kernel via enum (Kernel::Classic3, ::Wide5, ::FastGaussian). For classic/wide5, multi-pass imitates stronger smoothing. For fastgauss, a single pass with sigma parameter should approximate double-pass classic (sigma tune ~1.4–1.6).
+Metrics sampling (variance ratio) executed once per logical spatial smoothing to avoid bias from multi-pass.
+Future optional metric: gradientEnergyBefore/After for edge preservation.
+
+## 7. Adaptive Control Stage
+Reads previous frame `stabilityRatio` / `avgVariance`, applies hysteresis streak thresholds (`CALDERA_ADAPTIVE_ON_STREAK`, `CALDERA_ADAPTIVE_OFF_STREAK`), sets `spatialActive` and optionally `strongActive`. Also sets `temporalBlendApplied` if instability triggers adaptive temporal scaling (`CALDERA_ADAPTIVE_TEMPORAL_SCALE`).
+
+## 8. Metrics Summary
+Existing: stabilityRatio, avgVariance, spatialVarianceRatio, adaptiveSpatial, adaptiveStrong, adaptiveStreak, adaptiveTemporalBlend.
+Added (M5): meanConfidence, fractionLowConfidence, fractionHighConfidence (only when enabled).
+Sampling size: `CALDERA_SPATIAL_SAMPLE_COUNT` reused.
+
+## 9. Performance Notes
+* One virtual call per stage (~negligible vs pixel loops).
+* All scratch buffers reused (no per-frame allocations when steady-state reached).
+* Confidence map adds one linear pass when enabled.
+
+## 10. Implementation Order (Detailed)
+1. Stage interfaces + FrameContext/AdaptiveState definitions (no behavior change yet).
+2. Refactor ProcessingManager: wrap current logic into BuildStage, PlaneValidateStage, TemporalStage, AdaptiveControlStage, SpatialStage (classic baseline), SpatialStageStrong (classic double-pass) – preserve existing outputs.
+3. Implement ConfidenceStage MVP (+ env flags, metrics aggregates, tests).
+4. Pipeline string parser (CALDERA_PIPELINE) constructing stage list; error-handling with fallback to default ordering.
+5. Integrate FastGaussian kernel into SpatialStage (mode=fastgauss, sigma env/param) + tests vs variance ratio.
+6. Replace double-pass strong with dedicated second spatial stage; retire internal double-pass branch.
+7. Optional gradient energy sampling metric (diagnostic logging only) to compare strong strategies.
+8. Add `CALDERA_ADAPTIVE_STRONG_KERNEL` allowing selection: classic|wide5|fastgauss (resolves which strong spatial stage is created).
+9. Documentation & design doc update (this file) + update implementation plan changelog.
+10. (Future) Per-pixel temporal variance stage stub (disabled by default) to upgrade confidence formula.
+
+## 11. Testing Matrix Additions
+| Test | Purpose |
+|------|---------|
+| ConfidenceInvalidZero | Invalid → 0 confidence |
+| ConfidenceStabilityInfluence | Mean increases with S |
+| ConfidenceSpatialBenefit | Spatial improvement raises mean |
+| ConfidenceTemporalInfluence | Temporal blend raises mean within cap |
+| PipelineOrderTest | Honors CALDERA_PIPELINE sequence |
+| FastGaussianVarRatioTest | Ensure fastgauss variance reduction ≤ double-pass classic + ε |
+| StrongKernelSelectionTest | Proper kernel chosen via CALDERA_ADAPTIVE_STRONG_KERNEL |
+| LegacyEmulationTest | Legacy pipeline matches previous outputs |
+
+## 12. Backward Compatibility
+No pipeline env → identical to pre-stage-refactor behavior (adaptive + optional confidence disabled). Setting `CALDERA_PIPELINE` overrides order. Confidence stage inert unless explicitly enabled.
+
+## 13. Future Extensions
+* JSON pipeline configuration.
+* Fusion strategies (min-z, confidence-weighted, time-consensus).
+* Per-pixel defect map integration into confidence.
+* Diagnostics ring buffer / UI introspection API.
+
+## 14. Open Questions
+1. Runtime (hot) pipeline reconfiguration? Initial scope: startup only.
+2. Automatic kernel selection using gradient metric? (Defer until data gathered.)
+3. Confidence external publishing channel now or after fusion weighting? (Likely after.)
+
+## 15. Legacy Vision Appendix (Retained)
+High-level GPU-first multi-sensor, motion-aware, and advanced filtering aspirations from earlier draft remain valid. They are intentionally pruned from the active near-term plan above to keep M5 scope lean. See previous revision sections for aspirational features (anisotropic diffusion, multi-resolution pyramids, ML noise models) to be revisited post M6.
 
 ---
-
-## Architecture Overview
-
-### Core Design Principles:
-1. **Modular Pipeline** - Each processing stage as independent, swappable component
-2. **GPU-First Approach** - Leverage compute shaders for all heavy lifting
-3. **Multi-Sensor Support** - Design for multiple Kinect/depth sensors from day one
-4. **Real-time Adaptability** - Dynamic parameter tuning based on conditions
-5. **Temporal Coherence** - Maintain stable output while preserving responsiveness
-
-### Layer 1 Processing Pipeline:
-```
-Raw Sensor Data → Preprocessing → Temporal Filtering → Spatial Filtering → World Frame Generation
-     ↓                ↓               ↓                 ↓                    ↓
-   RawFrame    →  CorrectedFrame → StabilizedFrame → FilteredFrame → WorldFrame
-```
-
----
+End of current stage-oriented processing design.
 
 ## Component Design Specifications
 

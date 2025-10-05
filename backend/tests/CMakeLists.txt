@@ -32,6 +32,11 @@ add_executable(CalderaTests
     processing/test_processing_spatial_sampling_metric.cpp
     processing/test_processing_spatial_kernel_wide5.cpp
     processing/test_processing_adaptive_temporal_scale.cpp
+    processing/test_processing_spatial_edge_metric.cpp
+    processing/test_processing_adaptive_strong_kernel.cpp
+    processing/test_processing_confidence_map.cpp
+    # performance (selected small benchmark included in light tests for visibility)
+    performance/test_performance_spatial_kernels.cpp
     # shm
     shm/test_shm_reader.cpp
     shm/test_shm_overflow.cpp
@@ -89,6 +94,7 @@ add_executable(CalderaHeavyTests
     test_main.cpp
     performance/test_performance_processing_stress.cpp
     performance/test_performance_pipeline_robust.cpp
+    performance/test_performance_spatial_kernels.cpp
     performance/test_performance_shm_benchmark.cpp
     performance/test_performance_shm_throughput_verified.cpp
     # helpers used by performance tests

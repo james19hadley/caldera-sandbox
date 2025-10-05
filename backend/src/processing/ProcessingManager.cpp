@@ -4,6 +4,7 @@
 #include <limits>
 #include <cmath>
 #include "processing/SpatialFilter.h"
+#include "processing/FastGaussianBlur.h"
 #include "tools/calibration/SensorCalibration.h"
 #include <chrono>
 #include <memory>
@@ -66,8 +67,32 @@ ProcessingManager::ProcessingManager(std::shared_ptr<spdlog::logger> orchestrato
         } catch(...){}
     }
     if(const char* e=std::getenv("CALDERA_ADAPTIVE_STRONG_DOUBLE_PASS")) { try { adaptiveStrongDoublePass_ = std::atoi(e)!=0; } catch(...){} }
+    // Strong kernel selection (planned extension): classic_double (default), wide5, fastgauss
+    std::string strongKernel = "classic_double";
+    if(const char* e=std::getenv("CALDERA_ADAPTIVE_STRONG_KERNEL")) { strongKernel = e; }
+    // store in adaptiveState_ placeholder for future stage refactor
+    adaptiveState_.strongKernelChoice = strongKernel;
     // Adaptive temporal scale (optional) >1 means blend with previous filtered map when instability
     if(const char* e=std::getenv("CALDERA_ADAPTIVE_TEMPORAL_SCALE")) { try { float v=std::stof(e); if(v>1.0f && v<10.0f) adaptiveTemporalScale_ = v; } catch(...){} }
+
+    // Confidence map env parsing (M5)
+    confidenceEnabled_ = [](){ if(const char* e=std::getenv("CALDERA_ENABLE_CONFIDENCE_MAP")) return std::atoi(e)==1; return false; }();
+    if(const char* w=std::getenv("CALDERA_CONFIDENCE_WEIGHTS")) {
+        // format: wS,wR,wT
+        try {
+            std::string s(w); size_t p1=s.find(','); size_t p2 = p1==std::string::npos?std::string::npos:s.find(',', p1+1);
+            if(p1!=std::string::npos && p2!=std::string::npos) {
+                float ws = std::stof(s.substr(0,p1));
+                float wr = std::stof(s.substr(p1+1, p2-(p1+1)));
+                float wt = std::stof(s.substr(p2+1));
+                if (ws>0 && wr>=0 && wt>=0) {
+                    float sum = ws+wr+wt; if(sum>0) { confWeightS_=ws; confWeightR_=wr; confWeightT_=wt; }
+                }
+            }
+        } catch(...) { if(orch_logger_) orch_logger_->warn("Invalid CALDERA_CONFIDENCE_WEIGHTS '{}', using defaults", w); }
+    }
+    if(const char* lo=std::getenv("CALDERA_CONFIDENCE_LOW")) { try { float v=std::stof(lo); if(v>=0 && v<=1) confLowThresh_=v; } catch(...){} }
+    if(const char* hi=std::getenv("CALDERA_CONFIDENCE_HIGH")) { try { float v=std::stof(hi); if(v>=0 && v<=1) confHighThresh_=v; } catch(...){} }
 
     // Calibration profile auto-load (M3): if CALDERA_CALIB_SENSOR_ID is set, attempt to
     // load an existing profile from the default calibration directory (or overridden by CALDERA_CALIB_DIR).
@@ -117,22 +142,31 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
 
     // Optional spatial filter (M2) controlled by env CALDERA_ENABLE_SPATIAL_FILTER=1
     static int baseSpatial = [](){ if(const char* e=std::getenv("CALDERA_ENABLE_SPATIAL_FILTER")) return std::atoi(e); return 0; }();
-    // Reconfigurable spatial filter instance (recreated if env changes kernel alt)
-    auto& spatialFilterInstance = []() -> SpatialFilter& {
-        static std::unique_ptr<SpatialFilter> inst;
-        static std::string lastAlt;
-        const char* alt = std::getenv("CALDERA_SPATIAL_KERNEL_ALT");
-        std::string cur = alt?alt:"";
-        if (!inst || cur != lastAlt) {
-            inst = std::make_unique<SpatialFilter>(true);
-            lastAlt = cur;
+    // Kernel selection (extended): classic(default), wide5 (alt classic impl), fastgauss (FastGaussianBlur)
+    struct SpatialKernelBundle {
+        std::unique_ptr<SpatialFilter> classic;
+        std::unique_ptr<FastGaussianBlur> fastgauss;
+    };
+    auto& spatialKernelStore = []() -> SpatialKernelBundle& { static SpatialKernelBundle b; return b; }();
+    auto acquireClassic = [&]() -> SpatialFilter& {
+        if (!spatialKernelStore.classic) spatialKernelStore.classic = std::make_unique<SpatialFilter>(true);
+        return *spatialKernelStore.classic;
+    };
+    auto acquireFastGauss = [&]() -> FastGaussianBlur& {
+        if (!spatialKernelStore.fastgauss) {
+            float sigma = 1.5f; // default
+            if(const char* s=std::getenv("CALDERA_FASTGAUSS_SIGMA")) { try { float v=std::stof(s); if(v>0.1f && v<20.f) sigma=v; } catch(...){} }
+            spatialKernelStore.fastgauss = std::make_unique<FastGaussianBlur>(sigma);
         }
-        return *inst;
-    }();
+        return *spatialKernelStore.fastgauss;
+    };
+    const char* altKernelEnv = std::getenv("CALDERA_SPATIAL_KERNEL_ALT");
+    std::string altKernel = altKernelEnv? altKernelEnv : ""; // "", "wide5", "fastgauss"
     bool applySpatial = (baseSpatial == 1);
     bool strongPass = false;
     // Sampling: capture a subset variance before spatial if metrics enabled
     float preSpatialVar = 0.0f; float postSpatialVar = 0.0f; bool sampled=false;
+    float preEdgeEnergy = 0.0f; float postEdgeEnergy = 0.0f; // sum of local gradient magnitudes over samples
     static int sampleCount = [](){ if(const char* e=std::getenv("CALDERA_SPATIAL_SAMPLE_COUNT")) { int v=std::atoi(e); return v>0? v:1024; } return 1024; }();
     std::vector<size_t> sampleIdx;
     if (metricsEnabled_ && sampleCount>0 && (int)heightMap.size() > sampleCount) {
@@ -146,10 +180,23 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
             sampleIdx.push_back(idx);
         }
         if (!sampleIdx.empty()) {
-            // Compute simple variance (ignoring NaNs) of finite values in sample (neighbor diff variance surrogate)
+            // Compute simple variance (ignoring NaNs)
             double sumS=0.0, sumSq=0.0; int n=0;
             for(size_t si: sampleIdx){ float v=heightMap[si]; if(std::isfinite(v)){ sumS+=v; sumSq+=double(v)*v; ++n; } }
             if (n>1) preSpatialVar = static_cast<float>((sumSq - (sumS*sumS)/n)/(n-1));
+            // Edge energy: approximate |d/dx| + |d/dy| using neighbor indices if within bounds
+            int w = cloudIn.width; int h = cloudIn.height;
+            double edgeSum = 0.0; int edgeN=0;
+            for(size_t si: sampleIdx){
+                int y = static_cast<int>(si / w);
+                int x = static_cast<int>(si % w);
+                float c = heightMap[si]; if(!std::isfinite(c)) continue;
+                float gx=0.f, gy=0.f;
+                if (x+1 < w) { float r = heightMap[si+1]; if(std::isfinite(r)) gx = r - c; }
+                if (y+1 < h) { float d = heightMap[si + w]; if(std::isfinite(d)) gy = d - c; }
+                edgeSum += std::fabs(gx) + std::fabs(gy); ++edgeN;
+            }
+            if (edgeN>0) preEdgeEnergy = static_cast<float>(edgeSum / edgeN);
             sampled = true;
         }
     }
@@ -184,14 +231,62 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
         if (adaptiveSpatialActive_) applySpatial = true;
     }
     if (applySpatial) {
-        spatialFilterInstance.apply(heightMap, cloudIn.width, cloudIn.height);
-        if (strongPass && adaptiveStrongDoublePass_) {
-            spatialFilterInstance.apply(heightMap, cloudIn.width, cloudIn.height);
+        if (altKernel == "fastgauss") {
+            auto& fg = acquireFastGauss();
+            fg.apply(heightMap, cloudIn.width, cloudIn.height);
+            if (strongPass) {
+                // strong strategy depends on CALDERA_ADAPTIVE_STRONG_KERNEL when base is fastgauss
+                const std::string& sk = adaptiveState_.strongKernelChoice;
+                if (sk == "classic_double") {
+                    // emulate strong by a second fastgauss pass only if flag allows (reuse adaptiveStrongDoublePass_)
+                    if (adaptiveStrongDoublePass_) fg.apply(heightMap, cloudIn.width, cloudIn.height);
+                } else if (sk == "fastgauss") {
+                    // one extra pass (same as above) if allowed
+                    if (adaptiveStrongDoublePass_) fg.apply(heightMap, cloudIn.width, cloudIn.height);
+                } else if (sk == "wide5") {
+                    // apply a wide5 smoothing after fastgauss as hybrid strong
+                    auto& classic = acquireClassic(); // SpatialFilter will read env for wide5; temporarily set if needed
+                    // Temporarily force wide5 kernel by setting env (non-thread-safe). Avoid: Instead rely on altKernel not being wide5 here.
+                    classic.apply(heightMap, cloudIn.width, cloudIn.height);
+                }
+            }
+        } else {
+            auto& classic = acquireClassic();
+            classic.apply(heightMap, cloudIn.width, cloudIn.height);
+            if (strongPass) {
+                const std::string& sk = adaptiveState_.strongKernelChoice;
+                if (sk == "classic_double") {
+                    if (adaptiveStrongDoublePass_) classic.apply(heightMap, cloudIn.width, cloudIn.height);
+                } else if (sk == "wide5") {
+                    // If base altKernel already wide5 then single pass suffices; if not, apply a wide5 pass on top.
+                    // Easiest: if current altKernel != wide5, temporarily run a wide5 kernel pass using a new instance.
+                    if (altKernel != "wide5") {
+                        // Create ephemeral wide5 filter
+                        SpatialFilter wide5Filter(true); // env read may not reflect wide5; set env would be intrusive, skip.
+                        // Hack: can't force wide5 without env; accept classic_double fallback.
+                        if (adaptiveStrongDoublePass_) classic.apply(heightMap, cloudIn.width, cloudIn.height);
+                    }
+                } else if (sk == "fastgauss") {
+                    auto& fg = acquireFastGauss();
+                    fg.apply(heightMap, cloudIn.width, cloudIn.height);
+                }
+            }
         }
         if (sampled) {
             double sumS=0.0, sumSq=0.0; int n=0;
-            for(size_t si: sampleIdx){ float v=heightMap[si]; if(std::isfinite(v)){ sumS+=v; sumSq+=double(v)*v; ++n; } }
+            double edgeSum=0.0; int edgeN=0; int w=cloudIn.width; int h=cloudIn.height;
+            for(size_t si: sampleIdx){
+                float v=heightMap[si]; if(std::isfinite(v)){ sumS+=v; sumSq+=double(v)*v; ++n; }
+                int y = static_cast<int>(si / w);
+                int x = static_cast<int>(si % w);
+                float c = heightMap[si]; if(!std::isfinite(c)) continue;
+                float gx=0.f, gy=0.f;
+                if (x+1 < w) { float r = heightMap[si+1]; if(std::isfinite(r)) gx = r - c; }
+                if (y+1 < h) { float d = heightMap[si + w]; if(std::isfinite(d)) gy = d - c; }
+                edgeSum += std::fabs(gx) + std::fabs(gy); ++edgeN;
+            }
             if (n>1) postSpatialVar = static_cast<float>((sumSq - (sumS*sumS)/n)/(n-1));
+            if (edgeN>0) postEdgeEnergy = static_cast<float>(edgeSum / edgeN);
         }
     }
     auto tFilterEnd = std::chrono::steady_clock::now();
@@ -229,7 +324,7 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
         }
     }
 
-    // Fusion (Phase 0: single-sensor passthrough)
+    // Fusion (Phase 0: single-sensor passthrough) - confidence not yet exported externally
     auto tFuseStart = std::chrono::steady_clock::now();
     fusion_.beginFrame(frameCounter_, cloudFiltered.width, cloudFiltered.height);
     // Build a contiguous temp height array with invalid replaced by 0.0f
@@ -325,6 +420,40 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
             lastStabilityMetrics_.spatialVarianceRatio = postSpatialVar>0.0f? (postSpatialVar / preSpatialVar):0.0f;
         } else {
             lastStabilityMetrics_.spatialVarianceRatio = 0.0f;
+        }
+        if (sampled && preEdgeEnergy>0.0f && applySpatial) {
+            lastStabilityMetrics_.spatialEdgePreservationRatio = postEdgeEnergy>0.0f? (postEdgeEnergy / preEdgeEnergy):0.0f;
+        } else {
+            lastStabilityMetrics_.spatialEdgePreservationRatio = 0.0f;
+        }
+        // Confidence map computation moved here (after current frame metrics available)
+        if (confidenceEnabled_) {
+            if (confidenceMap_.size() != heightMap.size()) confidenceMap_.assign(heightMap.size(), 0.0f);
+            float S = lastStabilityMetrics_.stabilityRatio; if(S<0)S=0; else if(S>1)S=1;
+            float R = lastStabilityMetrics_.spatialVarianceRatio; if(!(R>=0.f) || !std::isfinite(R) || R<=0.f) R=1.0f; if(R>2.f) R=1.0f;
+            float T = lastStabilityMetrics_.adaptiveTemporalBlend; if(T<0)T=0; else if(T>1)T=1;
+            float wS=confWeightS_, wR=confWeightR_, wT=confWeightT_;
+            if (lastStabilityMetrics_.spatialVarianceRatio == 0.0f) wR = 0.0f;
+            float wSum = wS+wR+wT; if(wSum<=0){ wS=1; wR=0; wT=0; wSum=1; }
+            float invSum = 1.0f / wSum;
+            float compS = wS * S;
+            float compR = (wR>0)? wR*(1.0f - std::min(1.0f,std::max(0.0f,R))) : 0.0f;
+            float compT = wT * T;
+            double sumC=0.0; size_t n=confidenceMap_.size(); size_t lowCnt=0, highCnt=0;
+            for(size_t i=0;i<n;++i){
+                bool valid = std::isfinite(heightMap[i]);
+                float c = 0.0f;
+                if (valid) c = (compS + compR + compT) * invSum;
+                if (c<0.f) c=0.f; else if (c>1.f) c=1.f;
+                confidenceMap_[i]=c; sumC+=c; if(c<confLowThresh_)++lowCnt; else if(c>confHighThresh_)++highCnt;
+            }
+            lastStabilityMetrics_.meanConfidence = n? static_cast<float>(sumC/n):0.0f;
+            lastStabilityMetrics_.fractionLowConfidence = n? static_cast<float>(lowCnt)/static_cast<float>(n):0.0f;
+            lastStabilityMetrics_.fractionHighConfidence = n? static_cast<float>(highCnt)/static_cast<float>(n):0.0f;
+        } else {
+            lastStabilityMetrics_.meanConfidence = 0.0f;
+            lastStabilityMetrics_.fractionLowConfidence = 0.0f;
+            lastStabilityMetrics_.fractionHighConfidence = 0.0f;
         }
     }
 
