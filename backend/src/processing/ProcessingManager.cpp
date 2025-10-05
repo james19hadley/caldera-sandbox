@@ -9,6 +9,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include "processing/PipelineParser.h"
 
 using caldera::backend::common::Point3D;
 using caldera::backend::processing::InternalPointCloud;
@@ -77,6 +78,7 @@ ProcessingManager::ProcessingManager(std::shared_ptr<spdlog::logger> orchestrato
 
     // Confidence map env parsing (M5) with one-time / on-change logging for weights
     confidenceEnabled_ = [](){ if(const char* e=std::getenv("CALDERA_ENABLE_CONFIDENCE_MAP")) return std::atoi(e)==1; return false; }();
+    exportConfidence_ = [](){ if(const char* e=std::getenv("CALDERA_PROCESSING_EXPORT_CONFIDENCE")) return std::atoi(e)==1; return false; }();
     {
         const char* w = std::getenv("CALDERA_CONFIDENCE_WEIGHTS");
         static std::string lastWeightsSeen; // cached raw string
@@ -129,6 +131,15 @@ ProcessingManager::ProcessingManager(std::shared_ptr<spdlog::logger> orchestrato
             if (orch_logger_) orch_logger_->warn("Calibration profile not found for sensor '{}', continuing with fallback/defaults", sensorEnv);
         }
     }
+
+    // M5 Step 2: parse pipeline env (no execution yet)
+    parsePipelineEnv();
+
+    // Stage instantiation (initial: temporal only) – will expand as we migrate logic
+    if (height_filter_) {
+        // TemporalStage will be recreated if filter replaced externally; simple strategy for now
+        stages_.clear();
+    }
 }
 
 void ProcessingManager::setWorldFrameCallback(WorldFrameCallback cb) { callback_ = std::move(cb); }
@@ -150,19 +161,57 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
     auto tBuildStart = std::chrono::steady_clock::now();
     buildAndValidatePointCloud(raw, cloudIn, lastValidationSummary_);
     auto tBuildEnd = std::chrono::steady_clock::now();
+    if (pipelineSpecValid_ && !parsedPipelineSpecs_.empty()) {
+        if (orch_logger_ && orch_logger_->should_log(spdlog::level::trace)) {
+            orch_logger_->trace("Stage build: end (valid={} invalid={})", lastValidationSummary_.valid, lastValidationSummary_.invalid);
+        }
+    }
 
-    // Prepare temporary height buffer for filter (z values, invalid -> NaN)
+    // Prepare temp height map
     std::vector<float> heightMap;
     heightMap.reserve(cloudIn.points.size());
     for (const auto& p : cloudIn.points) {
-        if (p.valid && std::isfinite(p.z)) heightMap.push_back(p.z);
-        else heightMap.push_back(std::numeric_limits<float>::quiet_NaN());
+        heightMap.push_back((p.valid && std::isfinite(p.z)) ? p.z : std::numeric_limits<float>::quiet_NaN());
     }
 
-    // Apply temporal / other height filters (operate in-place on heightMap)
+    bool usePipeline = pipelineSpecValid_ && !parsedPipelineSpecs_.empty();
+    if (usePipeline && orch_logger_ && (frameCounter_ % 120)==0) {
+        orch_logger_->info("Executing parsed pipeline ({} stages)", parsedPipelineSpecs_.size());
+    }
+
+    // Stage loop (initial temporal only). For now we still directly invoke legacy gating logic below.
+    // Future: transform parsedPipelineSpecs_ into concrete stage objects and execute uniformly here.
+    for (auto& stPtr : stages_) {
+        (void)stPtr; // placeholder no-op until population logic added
+    }
+
+    // Apply temporal filter (either via pipeline spec or legacy path) with when= gating
     auto tFilterStart = std::chrono::steady_clock::now();
-    if (height_filter_) {
-        height_filter_->apply(heightMap, cloudIn.width, cloudIn.height);
+    bool temporalRequested = false;
+    if (usePipeline) {
+        for (const auto& stage : parsedPipelineSpecs_) if(stage.name=="temporal") { temporalRequested=true; break; }
+        if (temporalRequested) {
+            // Determine when= gating parameter (default always)
+            std::string whenCond = "always";
+            for (const auto& s : parsedPipelineSpecs_) if (s.name=="temporal") { auto it=s.params.find("when"); if(it!=s.params.end()) whenCond=it->second; break; }
+            bool skip=false; const char* skipReason=nullptr;
+            if (whenCond=="never") { skip=true; skipReason="when=never"; }
+            else if (whenCond=="adaptive") { if(!(adaptiveSpatialActive_ || adaptiveMode_==2)) { skip=true; skipReason="adaptive inactive"; } }
+            else if (whenCond=="adaptiveStrong") { if(!(adaptiveSpatialActive_ && adaptiveMode_==2)) { skip=true; skipReason="adaptive strong inactive"; } }
+            else if (!(whenCond=="always")) { // unknown token -> skip with warning once
+                skip=true; skipReason="unknown when condition";
+                if(orch_logger_) orch_logger_->warn("temporal stage unknown when='{}' -> skipped", whenCond);
+            }
+            if(!skip) {
+                if(orch_logger_ && orch_logger_->should_log(spdlog::level::trace)) orch_logger_->trace("Stage temporal: start (when={})", whenCond);
+                applyTemporalFilter(heightMap, cloudIn.width, cloudIn.height);
+                if(orch_logger_ && orch_logger_->should_log(spdlog::level::trace)) orch_logger_->trace("Stage temporal: end");
+            } else if (orch_logger_ && orch_logger_->should_log(spdlog::level::trace)) {
+                orch_logger_->trace("Stage temporal: skipped ({})", skipReason);
+            }
+        }
+    } else {
+        applyTemporalFilter(heightMap, cloudIn.width, cloudIn.height);
     }
 
     // Optional spatial filter (M2) controlled by env CALDERA_ENABLE_SPATIAL_FILTER=1
@@ -173,6 +222,24 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
     // set just before constructing a new ProcessingManager. We now read the env each frame so
     // per-test env overrides take effect even after prior tests have run.
     int baseSpatial = 0; if(const char* e=std::getenv("CALDERA_ENABLE_SPATIAL_FILTER")) baseSpatial = std::atoi(e);
+    bool pipelineRequestedSpatial = false;
+    if (usePipeline) {
+        for (const auto& s : parsedPipelineSpecs_) if (s.name=="spatial") { pipelineRequestedSpatial = true; break; }
+        if (!pipelineRequestedSpatial) baseSpatial = 0; else baseSpatial = 1;
+    }
+    std::string spatialWhen="always";
+    if (usePipeline && pipelineRequestedSpatial) {
+        for (const auto& s: parsedPipelineSpecs_) if(s.name=="spatial") { auto it=s.params.find("when"); if(it!=s.params.end()) spatialWhen=it->second; break; }
+        bool sSkip=false; const char* skipReason=nullptr;
+        if(spatialWhen=="never") { sSkip=true; skipReason="when=never"; }
+        else if(spatialWhen=="adaptive") { if(!(adaptiveMode_==2 && adaptiveSpatialActive_)) { sSkip=true; skipReason="adaptive inactive"; } }
+        else if(spatialWhen=="adaptiveStrong") { if(!(adaptiveMode_==2 && adaptiveSpatialActive_ && unstableStreak_>= (uint32_t)adaptiveOnStreak_)) { sSkip=true; skipReason="adaptive strong inactive"; } }
+        else if(!(spatialWhen=="always")) { sSkip=true; skipReason="unknown when condition"; if(orch_logger_) orch_logger_->warn("spatial stage unknown when='{}' -> skipped", spatialWhen); }
+        if (sSkip) {
+            baseSpatial = 0; // force disable spatial
+            if(orch_logger_ && orch_logger_->should_log(spdlog::level::trace)) orch_logger_->trace("Stage spatial: skipped ({})", skipReason);
+        }
+    }
     // Kernel selection (extended): classic(default), wide5 (alt classic impl), fastgauss (FastGaussianBlur)
     struct SpatialKernelBundle {
         std::unique_ptr<SpatialFilter> classic;
@@ -195,132 +262,27 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
     std::string altKernel = altKernelEnv? altKernelEnv : ""; // "", "wide5", "fastgauss"
     bool applySpatial = (baseSpatial == 1);
     bool strongPass = false;
-    // Sampling: capture a subset variance before spatial if metrics enabled
-    float preSpatialVar = 0.0f; float postSpatialVar = 0.0f; bool sampled=false;
-    float preEdgeEnergy = 0.0f; float postEdgeEnergy = 0.0f; // sum of local gradient magnitudes over samples
-    // Likewise make sampling count dynamic per frame (was static). Ensures tests can reduce sample
-    // size deterministically without being affected by earlier test configuration.
     int sampleCount = 1024; if(const char* e=std::getenv("CALDERA_SPATIAL_SAMPLE_COUNT")) { int v=std::atoi(e); if(v>0) sampleCount = v; }
-    std::vector<size_t> sampleIdx;
-    if (metricsEnabled_ && sampleCount>0 && (int)heightMap.size() > sampleCount) {
-        // Deterministic pseudo-random selection using linear congruential stepping
-        sampleIdx.reserve(sampleCount);
-        size_t step = (heightMap.size() / sampleCount);
-        if (step==0) step=1;
-        size_t seed = (frameCounter_ * 1664525u + 1013904223u) % heightMap.size();
-        size_t idx = seed % step; // start near deterministic offset
-        for (int i=0; i<sampleCount && idx<heightMap.size(); ++i, idx+=step) {
-            sampleIdx.push_back(idx);
-        }
-        if (!sampleIdx.empty()) {
-            // Compute simple variance (ignoring NaNs)
-            double sumS=0.0, sumSq=0.0; int n=0;
-            for(size_t si: sampleIdx){ float v=heightMap[si]; if(std::isfinite(v)){ sumS+=v; sumSq+=double(v)*v; ++n; } }
-            if (n>1) preSpatialVar = static_cast<float>((sumSq - (sumS*sumS)/n)/(n-1));
-            // Edge energy: approximate |d/dx| + |d/dy| using neighbor indices if within bounds
-            int w = cloudIn.width; int h = cloudIn.height;
-            double edgeSum = 0.0; int edgeN=0;
-            for(size_t si: sampleIdx){
-                int y = static_cast<int>(si / w);
-                int x = static_cast<int>(si % w);
-                float c = heightMap[si]; if(!std::isfinite(c)) continue;
-                float gx=0.f, gy=0.f;
-                if (x+1 < w) { float r = heightMap[si+1]; if(std::isfinite(r)) gx = r - c; }
-                if (y+1 < h) { float d = heightMap[si + w]; if(std::isfinite(d)) gy = d - c; }
-                edgeSum += std::fabs(gx) + std::fabs(gy); ++edgeN;
-            }
-            if (edgeN>0) preEdgeEnergy = static_cast<float>(edgeSum / edgeN);
-            sampled = true;
-        }
-    }
+    SpatialApplyResult spatialRes{}; // capture spatial metrics if applied
     if (adaptiveMode_ == 2 && metricsEnabled_) {
         if (frameCounter_ > 0) {
-            // Classification based on previous frame metrics
             float stab = lastStabilityMetrics_.stabilityRatio;
             float varP = lastStabilityMetrics_.avgVariance;
             bool unstable = (stab < adaptiveStabilityMin_) || (varP > adaptiveVarianceMax_);
-            bool stable = !unstable;
-            if (unstable) {
-                ++unstableStreak_;
-                stableStreak_ = 0;
-            } else {
-                ++stableStreak_;
-                unstableStreak_ = 0;
-            }
-            if (!adaptiveSpatialActive_ && unstable && unstableStreak_ >= static_cast<uint32_t>(adaptiveOnStreak_)) {
-                adaptiveSpatialActive_ = true;
-                if (orch_logger_) orch_logger_->info("Adaptive spatial ENABLE active after streak={} (stab={:.3f} var={:.5f})", unstableStreak_, stab, varP);
-            } else if (adaptiveSpatialActive_ && stable && stableStreak_ >= static_cast<uint32_t>(adaptiveOffStreak_)) {
-                adaptiveSpatialActive_ = false;
-                if (orch_logger_) orch_logger_->info("Adaptive spatial DISABLE after stable streak={} (stab={:.3f} var={:.5f})", stableStreak_, stab, varP);
-            }
-            // Strong pass decision (only if we are/will be applying spatial this frame)
-            if (adaptiveSpatialActive_) {
-                if ((varP > adaptiveVarianceMax_ * adaptiveStrongVarMult_) || (stab < adaptiveStabilityMin_ * adaptiveStrongStabFrac_)) {
-                    strongPass = true;
-                }
-            }
+            if (unstable) { ++unstableStreak_; stableStreak_ = 0; }
+            else { ++stableStreak_; unstableStreak_ = 0; }
+            // Hysteresis toggling
+            if (!adaptiveSpatialActive_ && unstableStreak_ >= (uint32_t)adaptiveOnStreak_) adaptiveSpatialActive_ = true;
+            if (adaptiveSpatialActive_ && stableStreak_ >= (uint32_t)adaptiveOffStreak_) adaptiveSpatialActive_ = false;
+            // Strong pass decision placeholder (future): strongPass derived from variance/stability thresholds
+            strongPass = adaptiveSpatialActive_ && (varP > adaptiveStrongVarMult_ * adaptiveVarianceMax_ || stab < adaptiveStrongStabFrac_);
         }
-        if (adaptiveSpatialActive_) applySpatial = true;
     }
     if (applySpatial) {
-        if (altKernel == "fastgauss") {
-            auto& fg = acquireFastGauss();
-            fg.apply(heightMap, cloudIn.width, cloudIn.height);
-            if (strongPass) {
-                // strong strategy depends on CALDERA_ADAPTIVE_STRONG_KERNEL when base is fastgauss
-                const std::string& sk = adaptiveState_.strongKernelChoice;
-                if (sk == "classic_double") {
-                    // emulate strong by a second fastgauss pass only if flag allows (reuse adaptiveStrongDoublePass_)
-                    if (adaptiveStrongDoublePass_) fg.apply(heightMap, cloudIn.width, cloudIn.height);
-                } else if (sk == "fastgauss") {
-                    // one extra pass (same as above) if allowed
-                    if (adaptiveStrongDoublePass_) fg.apply(heightMap, cloudIn.width, cloudIn.height);
-                } else if (sk == "wide5") {
-                    // apply a wide5 smoothing after fastgauss as hybrid strong
-                    auto& classic = acquireClassic(); // SpatialFilter will read env for wide5; temporarily set if needed
-                    // Temporarily force wide5 kernel by setting env (non-thread-safe). Avoid: Instead rely on altKernel not being wide5 here.
-                    classic.apply(heightMap, cloudIn.width, cloudIn.height);
-                }
-            }
-        } else {
-            auto& classic = acquireClassic();
-            classic.apply(heightMap, cloudIn.width, cloudIn.height);
-            if (strongPass) {
-                const std::string& sk = adaptiveState_.strongKernelChoice;
-                if (sk == "classic_double") {
-                    if (adaptiveStrongDoublePass_) classic.apply(heightMap, cloudIn.width, cloudIn.height);
-                } else if (sk == "wide5") {
-                    // If base altKernel already wide5 then single pass suffices; if not, apply a wide5 pass on top.
-                    // Easiest: if current altKernel != wide5, temporarily run a wide5 kernel pass using a new instance.
-                    if (altKernel != "wide5") {
-                        // Create ephemeral wide5 filter
-                        SpatialFilter wide5Filter(true); // env read may not reflect wide5; set env would be intrusive, skip.
-                        // Hack: can't force wide5 without env; accept classic_double fallback.
-                        if (adaptiveStrongDoublePass_) classic.apply(heightMap, cloudIn.width, cloudIn.height);
-                    }
-                } else if (sk == "fastgauss") {
-                    auto& fg = acquireFastGauss();
-                    fg.apply(heightMap, cloudIn.width, cloudIn.height);
-                }
-            }
-        }
-        if (sampled) {
-            double sumS=0.0, sumSq=0.0; int n=0;
-            double edgeSum=0.0; int edgeN=0; int w=cloudIn.width; int h=cloudIn.height;
-            for(size_t si: sampleIdx){
-                float v=heightMap[si]; if(std::isfinite(v)){ sumS+=v; sumSq+=double(v)*v; ++n; }
-                int y = static_cast<int>(si / w);
-                int x = static_cast<int>(si % w);
-                float c = heightMap[si]; if(!std::isfinite(c)) continue;
-                float gx=0.f, gy=0.f;
-                if (x+1 < w) { float r = heightMap[si+1]; if(std::isfinite(r)) gx = r - c; }
-                if (y+1 < h) { float d = heightMap[si + w]; if(std::isfinite(d)) gy = d - c; }
-                edgeSum += std::fabs(gx) + std::fabs(gy); ++edgeN;
-            }
-            if (n>1) postSpatialVar = static_cast<float>((sumSq - (sumS*sumS)/n)/(n-1));
-            if (edgeN>0) postEdgeEnergy = static_cast<float>(edgeSum / edgeN);
-        }
+        spatialRes = applySpatialFilter(heightMap, cloudIn.width, cloudIn.height, altKernel, applySpatial, strongPass, metricsEnabled_, sampleCount);
+    }
+    if (usePipeline && orch_logger_ && orch_logger_->should_log(spdlog::level::trace)) {
+        orch_logger_->trace("Stage spatial: end (strong={} preVar={:.6f} postVar={:.6f})", strongPass, spatialRes.preVar, spatialRes.postVar);
     }
     auto tFilterEnd = std::chrono::steady_clock::now();
 
@@ -359,6 +321,7 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
 
     // Fusion (Phase 0: single-sensor passthrough) - confidence not yet exported externally
     auto tFuseStart = std::chrono::steady_clock::now();
+    if (usePipeline && orch_logger_ && orch_logger_->should_log(spdlog::level::trace)) orch_logger_->trace("Stage fuse: start");
     fusion_.beginFrame(frameCounter_, cloudFiltered.width, cloudFiltered.height);
     // Build a contiguous temp height array with invalid replaced by 0.0f
     std::vector<float> tempHeights;
@@ -373,6 +336,7 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
     std::vector<float> fusedHeights; // output buffer
     fusion_.fuse(fusedHeights, nullptr);
     auto tFuseEnd = std::chrono::steady_clock::now();
+    if (usePipeline && orch_logger_ && orch_logger_->should_log(spdlog::level::trace)) orch_logger_->trace("Stage fuse: end (w={} h={})", cloudFiltered.width, cloudFiltered.height);
 
     // Assemble WorldFrame from fused result
     WorldFrame frame;
@@ -445,20 +409,16 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
         lastStabilityMetrics_.stabilityRatio = considered? static_cast<float>(stable)/static_cast<float>(considered):1.0f;
         // Adaptive metrics capture
         lastStabilityMetrics_.adaptiveSpatial = adaptiveSpatialActive_ ? 1.0f : 0.0f;
-        lastStabilityMetrics_.adaptiveStrong = (strongPass && applySpatial) ? 1.0f : 0.0f;
+        lastStabilityMetrics_.adaptiveStrong = (spatialRes.strong && spatialRes.applied) ? 1.0f : 0.0f;
         lastStabilityMetrics_.adaptiveStreak = adaptiveSpatialActive_ ? unstableStreak_ : 0u;
         lastStabilityMetrics_.adaptiveTemporalBlend = adaptiveTemporalApplied ? 1.0f : 0.0f;
         // Store spatial variance ratio if sampled and meaningful
-        if (sampled && preSpatialVar>0.0f && applySpatial) {
-            lastStabilityMetrics_.spatialVarianceRatio = postSpatialVar>0.0f? (postSpatialVar / preSpatialVar):0.0f;
-        } else {
-            lastStabilityMetrics_.spatialVarianceRatio = 0.0f;
-        }
-        if (sampled && preEdgeEnergy>0.0f && applySpatial) {
-            lastStabilityMetrics_.spatialEdgePreservationRatio = postEdgeEnergy>0.0f? (postEdgeEnergy / preEdgeEnergy):0.0f;
-        } else {
-            lastStabilityMetrics_.spatialEdgePreservationRatio = 0.0f;
-        }
+        if (spatialRes.sampled && spatialRes.preVar>0.0f && spatialRes.applied) {
+            lastStabilityMetrics_.spatialVarianceRatio = spatialRes.postVar>0.0f? (spatialRes.postVar / spatialRes.preVar):0.0f;
+        } else lastStabilityMetrics_.spatialVarianceRatio = 0.0f;
+        if (spatialRes.sampled && spatialRes.preEdge>0.0f && spatialRes.applied) {
+            lastStabilityMetrics_.spatialEdgePreservationRatio = spatialRes.postEdge>0.0f? (spatialRes.postEdge / spatialRes.preEdge):0.0f;
+        } else lastStabilityMetrics_.spatialEdgePreservationRatio = 0.0f;
         // Confidence map computation moved here (after current frame metrics available)
         if (confidenceEnabled_) {
             if (confidenceMap_.size() != heightMap.size()) confidenceMap_.assign(heightMap.size(), 0.0f);
@@ -483,6 +443,7 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
             lastStabilityMetrics_.meanConfidence = n? static_cast<float>(sumC/n):0.0f;
             lastStabilityMetrics_.fractionLowConfidence = n? static_cast<float>(lowCnt)/static_cast<float>(n):0.0f;
             lastStabilityMetrics_.fractionHighConfidence = n? static_cast<float>(highCnt)/static_cast<float>(n):0.0f;
+            if (pipelineSpecValid_ && orch_logger_ && orch_logger_->should_log(spdlog::level::trace)) orch_logger_->trace("Stage confidence: mean={:.3f}", lastStabilityMetrics_.meanConfidence);
         } else {
             lastStabilityMetrics_.meanConfidence = 0.0f;
             lastStabilityMetrics_.fractionLowConfidence = 0.0f;
@@ -498,6 +459,125 @@ void ProcessingManager::processRawDepthFrame(const RawDepthFrame& raw) {
 
     ++frameCounter_;
     if (callback_) callback_(frame);
+}
+void ProcessingManager::applyTemporalFilter(std::vector<float>& heightMap, int w, int h) {
+    if (height_filter_) height_filter_->apply(heightMap, w, h);
+}
+
+ProcessingManager::SpatialApplyResult ProcessingManager::applySpatialFilter(std::vector<float>& heightMap,
+                                                                           int w,
+                                                                           int h,
+                                                                           const std::string& altKernel,
+                                                                           bool applySpatial,
+                                                                           bool strongPass,
+                                                                           bool metricsEnabled,
+                                                                           int sampleCount) {
+    SpatialApplyResult res;
+    if(!applySpatial) return res;
+    res.applied = true;
+
+    // Acquire kernels lazily (reuse legacy lambdas but localized here)
+    struct SpatialKernelBundle { std::unique_ptr<SpatialFilter> classic; std::unique_ptr<FastGaussianBlur> fastgauss; };
+    auto& spatialKernelStore = []() -> SpatialKernelBundle& { static SpatialKernelBundle b; return b; }();
+    auto acquireClassic = [&]() -> SpatialFilter& {
+        if (!spatialKernelStore.classic) spatialKernelStore.classic = std::make_unique<SpatialFilter>(true);
+        return *spatialKernelStore.classic;
+    };
+    auto acquireFastGauss = [&]() -> FastGaussianBlur& {
+        if (!spatialKernelStore.fastgauss) {
+            float sigma = 1.5f; if(const char* s=std::getenv("CALDERA_FASTGAUSS_SIGMA")) { try { float v=std::stof(s); if(v>0.1f && v<20.f) sigma=v; } catch(...){} }
+            spatialKernelStore.fastgauss = std::make_unique<FastGaussianBlur>(sigma);
+        }
+        return *spatialKernelStore.fastgauss;
+    };
+
+    // Pre-sampling
+    std::vector<size_t> sampleIdx;
+    if (metricsEnabled && sampleCount>0 && (int)heightMap.size() > sampleCount) {
+        sampleIdx.reserve(sampleCount);
+        size_t step = (heightMap.size() / sampleCount); if(step==0) step=1;
+        size_t seed = (frameCounter_ * 1664525u + 1013904223u) % heightMap.size();
+        size_t idx = seed % step;
+        for (int i=0; i<sampleCount && idx<heightMap.size(); ++i, idx+=step) sampleIdx.push_back(idx);
+        if(!sampleIdx.empty()) {
+            double sumS=0.0,sumSq=0.0; int n=0; double edge=0.0; int edgeN=0;
+            for(size_t si: sampleIdx){ float v=heightMap[si]; if(std::isfinite(v)){ sumS+=v; sumSq+=double(v)*v; ++n; } }
+            if(n>1) res.preVar = static_cast<float>((sumSq - (sumS*sumS)/n)/(n-1));
+            int W=w,H=h; for(size_t si: sampleIdx){ int y=int(si / W); int x=int(si % W); float c=heightMap[si]; if(!std::isfinite(c)) continue; float gx=0.f, gy=0.f; if(x+1<W){ float r=heightMap[si+1]; if(std::isfinite(r)) gx=r-c; } if(y+1<H){ float d=heightMap[si+W]; if(std::isfinite(d)) gy=d-c; } edge += std::fabs(gx)+std::fabs(gy); ++edgeN; }
+            if(edgeN>0) res.preEdge = static_cast<float>(edge / edgeN);
+            res.sampled = true;
+        }
+    }
+
+    // Apply kernels
+    if (altKernel == "fastgauss") {
+        auto& fg = acquireFastGauss();
+        fg.apply(heightMap, w, h);
+        if (strongPass) {
+            const std::string& sk = adaptiveState_.strongKernelChoice;
+            if (sk == "classic_double" || sk == "fastgauss") {
+                if (adaptiveStrongDoublePass_) fg.apply(heightMap, w, h);
+            } else if (sk == "wide5") {
+                auto& classic = acquireClassic();
+                classic.apply(heightMap, w, h);
+            }
+        }
+    } else {
+        auto& classic = acquireClassic();
+        classic.apply(heightMap, w, h);
+        if (strongPass) {
+            const std::string& sk = adaptiveState_.strongKernelChoice;
+            if (sk == "classic_double") {
+                if (adaptiveStrongDoublePass_) classic.apply(heightMap, w, h);
+            } else if (sk == "wide5") {
+                if (altKernel != "wide5") {
+                    // fallback: apply another classic pass if cannot enforce wide5 distinctively
+                    if (adaptiveStrongDoublePass_) classic.apply(heightMap, w, h);
+                }
+            } else if (sk == "fastgauss") {
+                auto& fg = acquireFastGauss();
+                fg.apply(heightMap, w, h);
+            }
+        }
+    }
+    res.strong = strongPass;
+
+    // Post-sampling
+    if (res.sampled) {
+        double sumS=0.0,sumSq=0.0; int n=0; double edge=0.0; int edgeN=0; int W=w,H=h;
+        for(size_t si=0; si<heightMap.size() && n>=0 && si<heightMap.size(); ++si) { /* guard not needed */ }
+        // Use same sampleIdx indices
+        for(size_t si: sampleIdx){ float v=heightMap[si]; if(std::isfinite(v)){ sumS+=v; sumSq+=double(v)*v; ++n; } }
+        if(n>1) res.postVar = static_cast<float>((sumSq - (sumS*sumS)/n)/(n-1));
+        for(size_t si: sampleIdx){ int y=int(si / W); int x=int(si % W); float c=heightMap[si]; if(!std::isfinite(c)) continue; float gx=0.f, gy=0.f; if(x+1<W){ float r=heightMap[si+1]; if(std::isfinite(r)) gx=r-c; } if(y+1<H){ float d=heightMap[si+W]; if(std::isfinite(d)) gy=d-c; } edge += std::fabs(gx)+std::fabs(gy); ++edgeN; }
+        if(edgeN>0) res.postEdge = static_cast<float>(edge / edgeN);
+    }
+    return res;
+}
+
+
+} // namespace caldera::backend::processing
+
+namespace caldera::backend::processing {
+
+void ProcessingManager::parsePipelineEnv() {
+    const char* spec = std::getenv("CALDERA_PROCESSING_PIPELINE");
+    if(!spec || !*spec) { pipelineSpecValid_ = false; pipelineSpecError_ = "(unset)"; return; }
+    auto res = parsePipelineSpec(spec);
+    if(res.ok) {
+        parsedPipelineSpecs_ = std::move(res.stages);
+        pipelineSpecValid_ = true;
+        pipelineSpecError_.clear();
+        if(orch_logger_) {
+            std::ostringstream oss; oss << "Parsed pipeline: ";
+            bool first=true; for(auto& st: parsedPipelineSpecs_) { if(!first) oss << " -> "; first=false; oss << st.name; if(!st.params.empty()){ oss << "("; bool fp=true; for(auto& kv: st.params){ if(!fp) oss << ","; fp=false; oss << kv.first << "=" << kv.second; } oss << ")"; } }
+            orch_logger_->info(oss.str());
+        }
+    } else {
+        pipelineSpecValid_ = false;
+        pipelineSpecError_ = res.error;
+        if(orch_logger_) orch_logger_->warn("Failed to parse CALDERA_PIPELINE: {} (fallback to legacy sequence)", res.error);
+    }
 }
 
 } // namespace caldera::backend::processing

@@ -11,6 +11,7 @@
 #include "processing/ProcessingTypes.h"
 #include "processing/FusionAccumulator.h"
 #include "processing/ProcessingStages.h" // stage scaffolding (future use)
+#include "processing/PipelineParser.h" // StageSpec definition
 
 namespace spdlog { class logger; }
 
@@ -71,6 +72,9 @@ public:
 
     const StabilityMetrics& lastStabilityMetrics() const { return lastStabilityMetrics_; }
 
+    // Confidence map accessor: returns view of last computed map (empty if disabled or size mismatch)
+    const std::vector<float>& confidenceMap() const { return confidenceMap_; }
+
     const FrameValidationSummary& lastValidationSummary() const { return lastValidationSummary_; }
 
     // Allow tests / higher layers to inject transform & plane parameters (per-sensor for now)
@@ -99,6 +103,29 @@ private:
     void buildAndValidatePointCloud(const RawDepthFrame& raw,
                                     InternalPointCloud& cloud,
                                     FrameValidationSummary& summary);
+    // Helpers (refactor targets) used by both legacy and pipeline execution paths
+    void applyTemporalFilter(std::vector<float>& heightMap, int w, int h);
+    struct SpatialApplyResult {
+        bool applied=false;
+        bool strong=false;
+        bool sampled=false;
+        float preVar=0.f;
+        float postVar=0.f;
+        float preEdge=0.f;
+        float postEdge=0.f;
+    };
+    SpatialApplyResult applySpatialFilter(std::vector<float>& heightMap,
+                                          int w,
+                                          int h,
+                                          const std::string& altKernel,
+                                          bool applySpatial,
+                                          bool strongPass,
+                                          bool metricsEnabled,
+                                          int sampleCount);
+
+    // Attempt to parse CALDERA_PIPELINE once (lazy executed in ctor). Purely informational until
+    // stage execution refactor lands. If parsing fails we keep specs_ empty and mark fallback.
+    void parsePipelineEnv();
 
 private:
     std::shared_ptr<spdlog::logger> orch_logger_;
@@ -137,6 +164,7 @@ private:
     // Confidence map support (M5 MVP)
     bool confidenceEnabled_ = false; // env CALDERA_ENABLE_CONFIDENCE_MAP
     std::vector<float> confidenceMap_; // same dimensions as height map when enabled
+    bool exportConfidence_ = false; // CALDERA_PROCESSING_EXPORT_CONFIDENCE
     float confWeightS_ = 0.6f; // wS
     float confWeightR_ = 0.25f; // wR
     float confWeightT_ = 0.15f; // wT
@@ -147,6 +175,10 @@ private:
     // in subsequent steps without breaking existing processRawDepthFrame logic.
     std::vector<std::unique_ptr<IProcessingStage>> stages_; // unused until M5 Step 2
     AdaptiveState adaptiveState_; // shared state for future adaptive_control + spatial stages
+    // Parsed pipeline specs (M5 Step 2). Not yet executed; retained for diagnostics/testing.
+    std::vector<StageSpec> parsedPipelineSpecs_;
+    bool pipelineSpecValid_ = false;
+    std::string pipelineSpecError_;
     // Thread-safety: Phase 0 design assumed single-sensor feed. Multi-sensor tests invoke
     // processRawDepthFrame concurrently from multiple SyntheticSensorDevice threads, which led
     // to data races (and a heap-use-after-free via FusionAccumulator using a pointer to a

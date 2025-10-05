@@ -22,6 +22,12 @@ add_executable(CalderaTests
     processing/test_TemporalFilter.cpp
     processing/test_processing_invalid_pixels.cpp
     processing/test_fusion_passthrough.cpp
+    processing/test_fusion_min_z.cpp
+    processing/test_fusion_metrics.cpp
+    processing/test_fusion_weighted.cpp
+    processing/test_fusion_all_invalid.cpp
+    processing/test_fusion_zero_confidence.cpp
+    processing/test_fusion_confidence_clamp.cpp
     processing/test_processing_plane_validation.cpp
     processing/test_processing_spatial_filter_impulse.cpp
     processing/test_processing_env_calibration_fallback.cpp
